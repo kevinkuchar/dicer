@@ -1,15 +1,15 @@
 package main
 
 import (
-	"bufio"
-	"dicer/pkg/logger"
 	"dicer/pkg/math"
 	"dicer/pkg/stack"
 	"fmt"
 	"math/rand/v2"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/pterm/pterm"
+	"github.com/pterm/pterm/putils"
 )
 
 /*************************************
@@ -138,32 +138,11 @@ func CreateAndRollDie() Dice {
 	return die
 }
 
-func (t Turn) PrintRoll() {
-	var sb strings.Builder
-	for i := range t.dice {
-		sb.WriteString("[ ")
-		sb.WriteString(fmt.Sprintf("%d", t.dice[i].value))
-		sb.WriteString(" ]")
-		sb.WriteString(" ")
-	}
-	logger.LogSuccess(sb.String())
-}
-
 /*************************************
 * Turn Functions
 *************************************/
 func DoTurnStart(player Player, turn Turn) {
-	var sb strings.Builder
-	for i := range player.Ailments.remaining {
-		if player.Ailments.remaining[i] != REMOVED_AILMENT_VALUE {
-			sb.WriteString(fmt.Sprintf("[ %d ]", player.Ailments.remaining[i]))
-		}
-	}
 
-	logger.LogInfo("Starting Turn:", turn.round)
-	logger.LogInfo("Ailments:", sb.String())
-	logger.LogInfo("Lives:", player.Lives)
-	time.Sleep(2 * time.Second)
 }
 
 func DoRollDice(turn *Turn) {
@@ -174,33 +153,35 @@ func DoRollDice(turn *Turn) {
 	turn.dice = dice
 }
 
-func DoViewRoll(turn *Turn) {
-	turn.PrintRoll()
+func DoViewRoll(turn Turn, area *pterm.AreaPrinter) {
+	RenderDice(turn, area, "Initial Roll")
 }
 
 func DoDiceChoice(turn *Turn) {
-	reader := bufio.NewReader(os.Stdin)
-	for i := range turn.dice {
-		logger.LogWarning("Reroll die", i+1, "with value", turn.dice[i].value, "? (y/n)")
-		fmt.Print("> ")
-		opt, _ := reader.ReadString('\n')
-		opt = strings.TrimSpace(opt)
+	// Initialize an empty slice to hold the options.
+	var options []string
 
-		if opt == "y" {
-			turn.dice[i].Roll()
-		}
+	// Populate the options slice with 100 options.
+	for i := range turn.dice {
+		options = append(options, fmt.Sprintf("Reroll Die %d?", i+1))
+	}
+
+	selectedOptions, _ := pterm.DefaultInteractiveMultiselect.WithOptions(options).WithShowSelectedOptions(false).Show()
+
+	for idx := range selectedOptions {
+		turn.dice[idx].Roll()
 	}
 }
 
+func DoViewFinalRoll(turn Turn, area *pterm.AreaPrinter) {
+	RenderDice(turn, area, "Final Roll")
+}
+
 func DoTypeExpression(turn *Turn) {
-	reader := bufio.NewReader(os.Stdin)
-
-	logger.LogWarning("Type the math expression using +  - * / operators")
-	fmt.Print("> ")
-	text, _ := reader.ReadString('\n')
-	text = strings.TrimSpace(text)
-
-	turn.expression = text
+	result, _ := pterm.DefaultInteractiveTextInput.WithDefaultText("Type expression").Show()
+	pterm.Println()
+	turn.expression = result
+	time.Sleep(time.Second)
 }
 
 func DoEvaluateExpression(turn *Turn) {
@@ -221,20 +202,92 @@ func DoApplyResult(player *Player, turn *Turn) {
 
 func DoShowTurnResult(turn Turn) {
 	if turn.removedAilment {
-		logger.LogSuccess("Boom! You removed an ailment", turn.result)
+		pterm.Println(pterm.Green("Boom! You removed an ailment! Your expression was equal to ", turn.result, "!"))
 	} else {
-		logger.LogError("Oh no! You didnt have an ailment equal to", turn.result, "You lose a life!")
+		pterm.Println(pterm.Red("Oh no! You didnt have an ailment equal to ", turn.result, ". You lose a life!"))
 	}
+	time.Sleep(time.Second * 2)
 }
 
 func DoTurnEnd(player Player) {
 	if !player.Ailments.HasAilments() {
-		logger.LogSuccess("Wow, you win!")
+		pterm.Println(pterm.Green("Wow, You Win!"))
 	}
 
 	if !player.HasLives() {
-		logger.LogError("Darn, you lose!")
+		pterm.Println(pterm.Red("Darn, you lose!"))
 	}
+}
+
+/*************************************
+* UI
+*************************************/
+func Render(player Player, turn Turn, area *pterm.AreaPrinter) {
+	paddedBox := pterm.DefaultBox.WithRightPadding(6).WithLeftPadding(6).WithTopPadding(1).WithBottomPadding(1)
+
+	// Logo
+	logo := GetLogo()
+
+	// Ailments
+	var asb strings.Builder
+	for i := range player.Ailments.remaining {
+		if player.Ailments.remaining[i] != REMOVED_AILMENT_VALUE {
+			asb.WriteString(pterm.LightWhite(fmt.Sprintf("[ %d ]", i+1)))
+		} else {
+			asb.WriteString(pterm.Red(fmt.Sprintf("[ %d ]", i+1)))
+		}
+	}
+	ailmentsTitle := pterm.Yellow("Ailments")
+	ailmentsParent := paddedBox.WithTitle(ailmentsTitle).WithTopPadding(1).Sprint(asb.String())
+
+	// Turn
+	roundTitle := pterm.Green("Turn")
+	round := paddedBox.WithTitle(roundTitle).WithTitleTopCenter().Sprintf("%d", turn.round)
+
+	// Lives
+	livesTitle := pterm.Blue("Lives")
+	lives := paddedBox.WithTitle(livesTitle).WithTitleTopCenter().Sprintf("%d", player.Lives)
+
+	statusPanels := pterm.Panels{
+		{
+			{Data: round},
+			{Data: lives},
+			{Data: ailmentsParent},
+		},
+	}
+
+	// Render the panels with a padding of 5
+	statusLayout, _ := pterm.DefaultPanel.WithPanels(statusPanels).WithPadding(1).Srender()
+
+	area.Update(
+		logo,
+		statusLayout,
+	)
+}
+
+func RenderDice(turn Turn, area *pterm.AreaPrinter, header string) {
+	paddedBox := pterm.DefaultBox.WithVerticalPadding(0).WithHorizontalPadding(4)
+
+	// Create boxes with the title positioned differently and containing different content
+	box1 := paddedBox.WithTitle(pterm.LightRed("Die 1")).WithTitleTopCenter().Sprint(turn.dice[0].value)
+	box2 := paddedBox.WithTitle(pterm.LightRed("Die 2")).WithTitleTopCenter().Sprint(turn.dice[1].value)
+	box3 := paddedBox.WithTitle(pterm.LightRed("Die 3")).WithTitleTopCenter().Sprint(turn.dice[2].value)
+
+	pterm.Println(pterm.Cyan(header))
+
+	pterm.DefaultPanel.WithPanels([][]pterm.Panel{
+		{{Data: box1}, {Data: box2}, {Data: box3}},
+	}).Render()
+
+}
+
+func GetLogo() string {
+	text, _ := pterm.DefaultBigText.WithLetters(
+		putils.LettersFromStringWithStyle("Dice", pterm.FgCyan.ToStyle()),
+		putils.LettersFromStringWithStyle("rooski", pterm.FgGreen.ToStyle())).
+		Srender()
+
+	return "\n" + text + "\n"
 }
 
 /*************************************
@@ -244,10 +297,14 @@ func main() {
 	player := CreatePlayer()
 	roundNumber := 0
 
+	area, _ := pterm.DefaultArea.Start()
+
 	for player.Ailments.HasAilments() && player.HasLives() {
 		roundNumber++
 		turn := Turn{round: roundNumber}
 		turnStack := CreateTurnStack()
+
+		Render(player, turn, area)
 
 		for !turnStack.IsEmpty() {
 			turnState, _ := turnStack.Top()
@@ -259,11 +316,11 @@ func main() {
 			case GS_RollDice:
 				DoRollDice(&turn)
 			case GS_ViewRoll:
-				DoViewRoll(&turn)
+				DoViewRoll(turn, area)
 			case GS_DiceChoice:
 				DoDiceChoice(&turn)
 			case GS_ViewFinalRoll:
-				DoViewRoll(&turn)
+				DoViewFinalRoll(turn, area)
 			case GS_TypeExpression:
 				DoTypeExpression(&turn)
 			case GS_EvaluateExpression:
@@ -277,4 +334,6 @@ func main() {
 			}
 		}
 	}
+
+	area.Stop()
 }

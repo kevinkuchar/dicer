@@ -5,6 +5,7 @@ import (
 	"dicer/pkg/stack"
 	"fmt"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 	"time"
 
@@ -163,13 +164,14 @@ func DoDiceChoice(turn *Turn) {
 
 	// Populate the options slice with 100 options.
 	for i := range turn.dice {
-		options = append(options, fmt.Sprintf("Reroll Die %d?", i+1))
+		options = append(options, fmt.Sprintf("%d", i+1))
 	}
 
-	selectedOptions, _ := pterm.DefaultInteractiveMultiselect.WithOptions(options).WithShowSelectedOptions(false).Show()
+	selectedOptions, _ := pterm.DefaultInteractiveMultiselect.WithOptions(options).WithShowSelectedOptions(false).WithFilter(false).WithDefaultText("Select which die to reroll").Show()
 
-	for idx := range selectedOptions {
-		turn.dice[idx].Roll()
+	for _, val := range selectedOptions {
+		num, _ := strconv.Atoi(val)
+		turn.dice[num-1].Roll()
 	}
 }
 

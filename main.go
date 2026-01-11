@@ -10,6 +10,9 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 /*************************************
@@ -122,6 +125,16 @@ type Turn struct {
 	expression     string
 	removedAilment bool
 	lostLife       bool
+	stack          *stack.ArrayStack[GameState]
+}
+
+func CreateTurn(round int) *Turn {
+	turn := &Turn{
+		round: round,
+		stack: CreateTurnStack(),
+	}
+
+	return turn
 }
 
 type Dice struct {
@@ -147,6 +160,142 @@ func (t Turn) PrintRoll() {
 		sb.WriteString(" ")
 	}
 	logger.LogSuccess(sb.String())
+}
+
+/*************************************
+* Bubble Tea
+*************************************/
+type model struct {
+	roundNumber int
+	player      Player
+	turn        *Turn
+}
+
+func initialModel() model {
+	return model{
+		roundNumber: 1,
+		player:      CreatePlayer(),
+		turn:        CreateTurn(1),
+	}
+}
+
+func (m model) Init() tea.Cmd {
+	// Just return `nil`, which means "no I/O right now, please."
+	return nil
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.player.Ailments.HasAilments() && m.player.HasLives() {
+
+	}
+
+	switch msg := msg.(type) {
+
+	// Is it a key press?
+	case tea.KeyMsg:
+
+		// Cool, what was the actual key pressed?
+		switch msg.String() {
+		case "r":
+			m.player.Lives--
+		// These keys should exit the program.
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		}
+	}
+
+	// Return the updated model to the Bubble Tea runtime for processing.
+	// Note that we're not returning a command.
+	return m, nil
+}
+
+func (m model) View() string {
+
+	logo := getLogo()
+	statusGrid := getStatusGrid(m.player.Lives, m.roundNumber, m.player.Ailments)
+
+	// Combine logo and grid with some spacing
+	return lipgloss.JoinVertical(lipgloss.Left, logo, statusGrid)
+}
+
+/**********************************
+* Vibe Coded UI Components
+**********************************/
+func getLogo() string {
+	// Pastel color scheme
+	pastelGreen := lipgloss.Color("#9FE2BF")
+	pastelBlue := lipgloss.Color("#87CEEB")
+
+	// Style for "Dice" part (green)
+	diceStyle := lipgloss.NewStyle().
+		Foreground(pastelGreen).
+		Bold(true)
+
+	// Style for "r" part (blue)
+	rStyle := lipgloss.NewStyle().
+		Foreground(pastelBlue).
+		Bold(true)
+
+	// Combine the styled parts
+	logoText := diceStyle.Render("///////////////////// Dice") + rStyle.Render("r ///////////////////////")
+
+	// Add padding around the whole logo
+	paddingStyle := lipgloss.NewStyle().Padding(1)
+
+	return paddingStyle.Render(logoText)
+}
+
+func getStatusGrid(lives int, turnNumber int, ailments *Ailments) string {
+	textColor := lipgloss.Color("#EAEAEA")
+	// Pastel color scheme
+	red := lipgloss.Color("#963c31")
+	blue := lipgloss.Color("#45657A")
+	gray := lipgloss.Color("#333333")
+
+	createStyle := func(background lipgloss.Color) lipgloss.Style {
+		return lipgloss.NewStyle().
+			Background(background).
+			Foreground(textColor).
+			Padding(1, 2).
+			Align(lipgloss.Center)
+	}
+	// Style for Turn Number section
+	turnStyle := createStyle(blue)
+
+	// Style for Lives section
+	livesStyle := createStyle(red)
+
+	// Style for Ailments section
+	ailmentsStyle := createStyle(gray)
+
+	// Build Lives content
+	livesText := fmt.Sprintf("Lives: %d", lives)
+	livesView := livesStyle.Render(livesText)
+
+	// Build Turn Number content
+	turnText := fmt.Sprintf("Turn: %d", turnNumber)
+	turnView := turnStyle.Render(turnText)
+
+	// Build Ailments content - show all ailment numbers in a row
+	var ailmentNumbers []string
+	for i := range ailments.remaining {
+		if ailments.remaining[i] != REMOVED_AILMENT_VALUE {
+			ailmentNumbers = append(ailmentNumbers, fmt.Sprintf("%d", ailments.remaining[i]))
+		}
+	}
+
+	ailmentsText := "Ailments: "
+	if len(ailmentNumbers) > 0 {
+		ailmentsText += strings.Join(ailmentNumbers, " ")
+	} else {
+		ailmentsText += "None"
+	}
+	ailmentsView := ailmentsStyle.Render(ailmentsText)
+
+	// Join sections horizontally
+	grid := lipgloss.JoinHorizontal(lipgloss.Top, livesView, turnView, ailmentsView)
+
+	return grid
 }
 
 /*************************************
@@ -241,40 +390,48 @@ func DoTurnEnd(player Player) {
 * Main Loop
 *************************************/
 func main() {
-	player := CreatePlayer()
-	roundNumber := 0
-
-	for player.Ailments.HasAilments() && player.HasLives() {
-		roundNumber++
-		turn := Turn{round: roundNumber}
-		turnStack := CreateTurnStack()
-
-		for !turnStack.IsEmpty() {
-			turnState, _ := turnStack.Top()
-			turnStack.Pop()
-
-			switch turnState {
-			case GS_TurnStart:
-				DoTurnStart(player, turn)
-			case GS_RollDice:
-				DoRollDice(&turn)
-			case GS_ViewRoll:
-				DoViewRoll(&turn)
-			case GS_DiceChoice:
-				DoDiceChoice(&turn)
-			case GS_ViewFinalRoll:
-				DoViewRoll(&turn)
-			case GS_TypeExpression:
-				DoTypeExpression(&turn)
-			case GS_EvaluateExpression:
-				DoEvaluateExpression(&turn)
-			case GS_ApplyResult:
-				DoApplyResult(&player, &turn)
-			case GS_ShowTurnResult:
-				DoShowTurnResult(turn)
-			case GS_TurnEnd:
-				DoTurnEnd(player)
-			}
-		}
+	p := tea.NewProgram(initialModel())
+	if _, err := p.Run(); err != nil {
+		fmt.Printf("Alas, there's been an error: %v", err)
+		os.Exit(1)
 	}
 }
+
+// func main() {
+// 	player := CreatePlayer()
+// 	roundNumber := 0
+
+// 	for player.Ailments.HasAilments() && player.HasLives() {
+// 		roundNumber++
+// 		turn := Turn{round: roundNumber}
+// 		turnStack := CreateTurnStack()
+
+// 		for !turnStack.IsEmpty() {
+// 			turnState, _ := turnStack.Top()
+// 			turnStack.Pop()
+
+// 			switch turnState {
+// 			case GS_TurnStart:
+// 				DoTurnStart(player, turn)
+// 			case GS_RollDice:
+// 				DoRollDice(&turn)
+// 			case GS_ViewRoll:
+// 				DoViewRoll(&turn)
+// 			case GS_DiceChoice:
+// 				DoDiceChoice(&turn)
+// 			case GS_ViewFinalRoll:
+// 				DoViewRoll(&turn)
+// 			case GS_TypeExpression:
+// 				DoTypeExpression(&turn)
+// 			case GS_EvaluateExpression:
+// 				DoEvaluateExpression(&turn)
+// 			case GS_ApplyResult:
+// 				DoApplyResult(&player, &turn)
+// 			case GS_ShowTurnResult:
+// 				DoShowTurnResult(turn)
+// 			case GS_TurnEnd:
+// 				DoTurnEnd(player)
+// 			}
+// 		}
+// 	}
+// }

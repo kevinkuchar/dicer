@@ -28,7 +28,7 @@ const (
 /*************************************
 * Game Configuration
 *************************************/
-const MAX_LIVES = 3
+const MAX_LIVES = 1
 const NUM_AILMENTS = 9
 const NUM_DICE = 3
 const REMOVED_AILMENT_VALUE = -1
@@ -167,7 +167,7 @@ func CreateAndRollDie() Dice {
 }
 
 /*************************************
-* Bubble Tea
+* Bubble Tea Model
 *************************************/
 type model struct {
 	roundNumber int
@@ -204,125 +204,240 @@ func initialModel() model {
 	}
 }
 
-func (m *model) IncrementTurn() {
+func (m model) Init() tea.Cmd {
+	return tea.EnterAltScreen
+}
+
+/*************************************
+* State Handlers
+*************************************/
+type StateHandler func(*model, tea.Msg) (tea.Model, tea.Cmd)
+
+// stateHandlers maps each game state to its handler function
+var stateHandlers = map[GameState]StateHandler{
+	GS_TurnStart:          handleTurnStart,
+	GS_DiceChoice:         handleDiceChoice,
+	GS_TypeExpression:     handleTypeExpression,
+	GS_EvaluateExpression: handleEvaluateExpression,
+	GS_TurnEnd:            handleTurnEnd,
+	GS_GameOver:           handleGameOver,
+}
+
+func handleTurnStart(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.message = "Press r to roll dice"
+	return *m, nil
+}
+
+func handleDiceChoice(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.message = "Select which die to reroll"
+	return *m, nil
+}
+
+func handleTypeExpression(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.message = "Type your expression using ( ) * / + -"
+	m.textInput, _ = m.textInput.Update(msg)
+	return *m, nil
+}
+
+func handleEvaluateExpression(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.turn.expression = m.textInput.Value()
+
+	// TODO: Add validation before evaluation
+	// if !isValidExpression(m.turn.expression) {
+	//     m.turn.stack.Push(GS_TypeExpression)
+	//     m.message = "Invalid expression. Try again."
+	//     return *m, nil
+	// }
+
+	m.turn.EvaluateExpression()
+	m.turn.ApplyResult(&m.player)
+
+	if m.checkGameOver() {
+		return handleGameOver(m, msg)
+	}
+
+	m.message = m.formatEvaluationResult()
+	m.turn.stack.Pop()
+	return *m, nil
+}
+
+func handleTurnEnd(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.resetDice()
+	return *m, nil
+}
+
+func handleGameOver(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.resetDice()
+	m.message = "GAME OVER!!"
+	return *m, nil
+}
+
+/*************************************
+* Model Utilities
+*************************************/
+func (m *model) incrementTurn() {
 	m.turn = CreateTurn(m.turn.round + 1)
 	m.textInput.Reset()
 	m.selected = make(map[int]struct{})
 	m.cursor = 0
 }
 
-func (m model) Init() tea.Cmd {
-	return tea.EnterAltScreen
+func (m *model) getCurrentState() (GameState, error) {
+	return m.turn.stack.Top()
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	startingState, _ := m.turn.stack.Top()
+func (m *model) checkGameOver() bool {
 
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	if !m.player.Ailments.HasAilments() {
+		return true
+		// 	return "You win!"
+	}
+	// }
+	if !m.player.HasLives() {
+		return true
+		// return "You lose
+	}
+	return false
+}
+
+func (m *model) rerollSelectedDice() {
+	for i := range m.selected {
+		m.turn.dice[i].Roll()
+	}
+}
+
+func (m *model) resetDice() {
+	m.turn.dice = nil
+}
+
+func (m *model) toggleDiceSelection() {
+	if _, ok := m.selected[m.cursor]; ok {
+		delete(m.selected, m.cursor)
+	} else {
+		m.selected[m.cursor] = struct{}{}
+	}
+}
+
+func (m *model) formatEvaluationResult() string {
+	var msg string
+	if m.turn.lostLife {
+		msg = fmt.Sprintf("You lost a life. %d missed", m.turn.result)
+	} else if m.turn.removedAilment {
+		msg = fmt.Sprintf("You hit! %d", m.turn.result)
+	}
+	return msg + " Press space to continue!"
+}
+
+func (m model) processGameState(state GameState, msg tea.Msg) (tea.Model, tea.Cmd) {
+	handler, exists := stateHandlers[state]
+	if !exists {
+		// Unknown state
+		return m, nil
+	}
+
+	return handler(&m, msg)
+}
+
+/*************************************
+* Key handlers
+*************************************/
+func (m *model) handleEnterKey(state GameState) {
+	switch state {
+	case GS_DiceChoice:
+		m.rerollSelectedDice()
+		m.turn.stack.Pop()
+	case GS_TypeExpression:
+		m.turn.stack.Pop()
+	}
+}
+
+func (m *model) handleSpaceKey(state GameState) {
+	switch state {
+	case GS_DiceChoice:
+		m.toggleDiceSelection()
+	case GS_TurnEnd:
+		m.incrementTurn()
+	}
+}
+
+func (m *model) handleRollKey(state GameState) {
+	if state == GS_TurnStart {
+		m.turn.stack.Pop()
+		m.turn.RollDice()
+	}
+}
+
+func (m *model) handleLeftKey(state GameState) {
+	if state == GS_DiceChoice && m.cursor > 0 {
+		m.cursor--
+	}
+}
+
+func (m *model) handleRightKey(state GameState) {
+	if state == GS_DiceChoice && m.cursor < len(m.choices)-1 {
+		m.cursor++
+	}
+}
+
+func (m *model) handleKeyPress(key tea.KeyMsg, state GameState) tea.Cmd {
+	switch key.String() {
+	case "ctrl+c", "q":
+		return tea.Quit
+
+	case "r":
+		m.handleRollKey(state)
+
+	case "left", "h":
+		m.handleLeftKey(state)
+
+	case "right", "l":
+		m.handleRightKey(state)
+
+	case "enter":
+		m.handleEnterKey(state)
+
+	case " ":
+		m.handleSpaceKey(state)
+	}
+
+	return nil
+}
+
+/*************************************
+* Bubble Tea Functions
+*************************************/
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle window resize early
+	if msg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-
-	// Key listners
-	case tea.KeyMsg:
-		switch msg.String() {
-		// These keys should exit the program.
-		case "ctrl+c", "q":
-			return m, tea.Quit
-
-		// The "r" key rolls the dice
-		case "r":
-			if startingState == GS_TurnStart {
-				m.turn.stack.Pop()
-				m.turn.RollDice()
-			}
-
-		// The "left" and "h" keys move the cursor left
-		case "left", "h":
-			if startingState == GS_DiceChoice && m.cursor > 0 {
-				m.cursor--
-			}
-
-		// The "right" and "l" keys move the cursor right
-		case "right", "l":
-			if startingState == GS_DiceChoice && m.cursor < len(m.choices)-1 {
-				m.cursor++
-			}
-
-		// The "enter" key submits user input
-		case "enter":
-			switch startingState {
-			case GS_DiceChoice:
-				for i := range m.selected {
-					m.turn.dice[i].Roll()
-				}
-				m.turn.stack.Pop()
-			case GS_TypeExpression:
-				m.turn.stack.Pop()
-			}
-
-		// The spacebar selects user choices
-		case " ":
-			switch startingState {
-			case GS_DiceChoice:
-				_, ok := m.selected[m.cursor]
-				if ok {
-					delete(m.selected, m.cursor)
-				} else {
-					m.selected[m.cursor] = struct{}{}
-				}
-			case GS_TurnEnd:
-				m.IncrementTurn()
-			}
-		}
 	}
 
-	// Game state
-	currentState, _ := m.turn.stack.Top()
+	// Check game over condition first
+	// if gameOverMsg := m.checkGameOver(); gameOverMsg != "" {
+	// 	m.message = gameOverMsg
+	// 	return m, nil
+	// }
 
-	if !m.player.Ailments.HasAilments() || !m.player.HasLives() {
-		if m.player.Lives > 0 {
-			m.message = "You win!"
-		} else {
-			m.message = "You lose!"
-		}
+	// Get current state
+	currentState, err := m.getCurrentState()
+	if err != nil {
+		// Handle stack error - could transition to game over
 		return m, nil
 	}
 
-	switch currentState {
-	case GS_TurnStart:
-		m.message = "Press r to roll dice"
-	case GS_DiceChoice:
-		m.message = "Select which die to reroll"
-	case GS_TypeExpression:
-		m.message = "Type your expression using ( ) * / + -"
-		m.textInput, _ = m.textInput.Update(msg)
-		return m, nil
-	case GS_EvaluateExpression:
-		m.message = "Evaluating expression..."
-		m.turn.expression = m.textInput.Value()
-		// verify if valid
-		// if not put other value back on stack
-
-		// evaluate
-		m.turn.EvaluateExpression()
-
-		// apply
-		m.turn.ApplyResult(&m.player)
-		m.turn.stack.Pop()
-		if m.turn.lostLife == true {
-			m.message = fmt.Sprintf("You lost a life. %d missed", m.turn.result)
-		} else if m.turn.removedAilment {
-			m.message = fmt.Sprintf("You hit! %d", m.turn.result)
+	// Handle key messages
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if cmd := m.handleKeyPress(keyMsg, currentState); cmd != nil {
+			return m, cmd
 		}
-
-		m.message = m.message + " Press space to continue!"
+		// Update state after key handling
+		currentState, _ = m.getCurrentState()
 	}
 
-	// Return the updated model to the Bubble Tea runtime for processing.
-	// Note that we're not returning a command.
-	return m, nil
+	// Process current game state
+	return m.processGameState(currentState, msg)
 }
 
 func (m model) View() string {

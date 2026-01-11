@@ -1,14 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"dicer/pkg/logger"
 	"dicer/pkg/math"
 	"dicer/pkg/stack"
 	"fmt"
 	"math/rand/v2"
 	"os"
-	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,17 +22,14 @@ const (
 	GS_DiceChoice                   // User selects what to do with each dice
 	GS_TypeExpression               // Type expression into terminal
 	GS_EvaluateExpression           // Evaluate expression
-	GS_ApplyResult                  // Applies result against ailments and lives
-	GS_ShowTurnResult               // Shows player status as result of turn
-	GS_TurnEnd                      // Yee
+	GS_TurnEnd                      // Turn ended
+	GS_GameOver                     // Game over
 )
 
 func CreateTurnStack() *stack.ArrayStack[GameState] {
 	stack := stack.CreateArrayStack[GameState]()
 
 	stack.Push(GS_TurnEnd)
-	stack.Push(GS_ShowTurnResult)
-	stack.Push(GS_ApplyResult)
 	stack.Push(GS_EvaluateExpression)
 	stack.Push(GS_TypeExpression)
 	stack.Push(GS_DiceChoice)
@@ -132,10 +127,27 @@ func CreateTurn(round int) *Turn {
 
 func (t *Turn) RollDice() {
 	dice := make([]Dice, NUM_DICE)
-	dice[0] = CreateAndRollDie()
-	dice[1] = CreateAndRollDie()
-	dice[2] = CreateAndRollDie()
+	for i := range dice {
+		dice[i] = CreateAndRollDie()
+	}
+
 	t.dice = dice
+}
+
+func (t *Turn) EvaluateExpression() {
+	postfix := math.InfixToPostfix(t.expression)
+	val, _ := math.EvaluatePostfixExpression(postfix)
+	t.result = val
+}
+
+func (t *Turn) ApplyResult(player *Player) {
+	if player.Ailments.HasAilment(t.result) {
+		player.Ailments.RemoveAilment(t.result)
+		t.removedAilment = true
+	} else {
+		player.Lives--
+		t.lostLife = true
+	}
 }
 
 type Dice struct {
@@ -175,14 +187,26 @@ func initialModel() model {
 	ti.CharLimit = 24
 	ti.Width = 20
 
+	var choices []string
+	for i := 0; i < NUM_DICE; i++ {
+		choices = append(choices, "")
+	}
+
 	return model{
 		roundNumber: 1,
 		selected:    make(map[int]struct{}),
-		choices:     []string{"", "", ""},
+		choices:     choices,
 		textInput:   ti,
 		player:      CreatePlayer(),
 		turn:        CreateTurn(1),
 	}
+}
+
+func (m *model) NewTurn() {
+	m.turn = CreateTurn(m.turn.round + 1)
+	m.textInput.Reset()
+	m.selected = make(map[int]struct{})
+	m.cursor = 0
 }
 
 func (m model) Init() tea.Cmd {
@@ -190,10 +214,8 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// if m.player.Ailments.HasAilments() && m.player.HasLives() {
-
-	// }
 	startingState, _ := m.turn.stack.Top()
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -240,20 +262,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// The spacebar selects user choices
 		case " ":
-			if startingState == GS_DiceChoice {
+			switch startingState {
+			case GS_DiceChoice:
 				_, ok := m.selected[m.cursor]
 				if ok {
 					delete(m.selected, m.cursor)
 				} else {
 					m.selected[m.cursor] = struct{}{}
 				}
+			case GS_TurnEnd:
+				m.NewTurn()
 			}
 		}
 	}
 
 	// Game state
 	currentState, _ := m.turn.stack.Top()
-	var cmd tea.Cmd
+
+	if !m.player.Ailments.HasAilments() || !m.player.HasLives() {
+		if m.player.Lives > 0 {
+			m.message = "You win!"
+		} else {
+			m.message = "You lose!"
+		}
+		return m, nil
+	}
 
 	switch currentState {
 	case GS_TurnStart:
@@ -262,10 +295,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.message = "Select which die to reroll"
 	case GS_TypeExpression:
 		m.message = "Type your expression using ( ) * / + -"
-		m.textInput, cmd = m.textInput.Update(msg)
-		return m, cmd
+		m.textInput, _ = m.textInput.Update(msg)
+		return m, nil
 	case GS_EvaluateExpression:
 		m.message = "Evaluating expression..."
+		m.turn.expression = m.textInput.Value()
+		// verify if valid
+		// if not put other value back on stack
+
+		// evaluate
+		m.turn.EvaluateExpression()
+
+		// apply
+		m.turn.ApplyResult(&m.player)
+		m.turn.stack.Pop()
+		if m.turn.lostLife == true {
+			m.message = fmt.Sprintf("You lost a life. %d missed", m.turn.result)
+		} else if m.turn.removedAilment {
+			m.message = fmt.Sprintf("You hit! %d", m.turn.result)
+		}
+
+		m.message = m.message + " Press space to continue!"
 	}
 
 	// Return the updated model to the Bubble Tea runtime for processing.
@@ -285,56 +335,6 @@ func (m model) View() string {
 /*************************************
 * Turn Functions
 *************************************/
-
-func DoDiceChoice(turn *Turn) {
-	reader := bufio.NewReader(os.Stdin)
-	for i := range turn.dice {
-		logger.LogWarning("Reroll die", i+1, "with value", turn.dice[i].value, "? (y/n)")
-		fmt.Print("> ")
-		opt, _ := reader.ReadString('\n')
-		opt = strings.TrimSpace(opt)
-
-		if opt == "y" {
-			turn.dice[i].Roll()
-		}
-	}
-}
-
-func DoTypeExpression(turn *Turn) {
-	reader := bufio.NewReader(os.Stdin)
-
-	logger.LogWarning("Type the math expression using +  - * / operators")
-	fmt.Print("> ")
-	text, _ := reader.ReadString('\n')
-	text = strings.TrimSpace(text)
-
-	turn.expression = text
-}
-
-func DoEvaluateExpression(turn *Turn) {
-	postfix := math.InfixToPostfix(turn.expression)
-	val, _ := math.EvaluatePostfixExpression(postfix)
-	turn.result = val
-}
-
-func DoApplyResult(player *Player, turn *Turn) {
-	if player.Ailments.HasAilment(turn.result) {
-		player.Ailments.RemoveAilment(turn.result)
-		turn.removedAilment = true
-	} else {
-		player.Lives--
-		turn.lostLife = true
-	}
-}
-
-func DoShowTurnResult(turn Turn) {
-	if turn.removedAilment {
-		logger.LogSuccess("Boom! You removed an ailment", turn.result)
-	} else {
-		logger.LogError("Oh no! You didnt have an ailment equal to", turn.result, "You lose a life!")
-	}
-}
-
 func DoTurnEnd(player Player) {
 	if !player.Ailments.HasAilments() {
 		logger.LogSuccess("Wow, you win!")
@@ -355,42 +355,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-
-// func main() {
-// 	player := CreatePlayer()
-// 	roundNumber := 0
-
-// 	for player.Ailments.HasAilments() && player.HasLives() {
-// 		roundNumber++
-// 		turn := Turn{round: roundNumber}
-// 		turnStack := CreateTurnStack()
-
-// 		for !turnStack.IsEmpty() {
-// 			turnState, _ := turnStack.Top()
-// 			turnStack.Pop()
-
-// 			switch turnState {
-// 			case GS_TurnStart:
-// 				DoTurnStart(player, turn)
-// 			case GS_RollDice:
-// 				DoRollDice(&turn)
-// 			case GS_ViewRoll:
-// 				DoViewRoll(&turn)
-// 			case GS_DiceChoice:
-// 				DoDiceChoice(&turn)
-// 			case GS_ViewFinalRoll:
-// 				DoViewRoll(&turn)
-// 			case GS_TypeExpression:
-// 				DoTypeExpression(&turn)
-// 			case GS_EvaluateExpression:
-// 				DoEvaluateExpression(&turn)
-// 			case GS_ApplyResult:
-// 				DoApplyResult(&player, &turn)
-// 			case GS_ShowTurnResult:
-// 				DoShowTurnResult(turn)
-// 			case GS_TurnEnd:
-// 				DoTurnEnd(player)
-// 			}
-// 		}
-// 	}
-// }

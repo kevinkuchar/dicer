@@ -21,7 +21,7 @@ const COLOR_TEXT = lipgloss.Color("#EAEAEA")
 const COLOR_RED = lipgloss.Color("#963c31")
 const COLOR_BLUE = lipgloss.Color("#45657A")
 const COLOR_AILMENT_ACTIVE = lipgloss.Color("#56787a")
-const COLOR_AILMENT_INACTIVE = lipgloss.Color("#77a6a9")
+const COLOR_AILMENT_INACTIVE = lipgloss.Color("#333333")
 
 func (m model) getHeader(width int) string {
 	prefixStyle := lipgloss.NewStyle().

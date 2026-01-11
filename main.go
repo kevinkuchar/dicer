@@ -224,7 +224,15 @@ func (m *model) getCurrentState() (GameState, error) {
 	return m.turn.stack.Top()
 }
 
-func (m *model) incrementTurn() {
+func (m *model) endTurn() {
+	// Check game over condition first
+	if isGameOver := m.checkGameOver(); isGameOver != false {
+		m.resetDice()
+		m.turn.stack.Push(GS_GameOver)
+		return
+	}
+
+	// Set state for next turn
 	next := m.roundNumber + 1
 	m.roundNumber = next
 	m.turn = CreateTurn(next)
@@ -256,6 +264,7 @@ var stateHandlers = map[GameState]StateHandler{
 	GS_RollPhase:       handleRollPhase,
 	GS_ExpressionPhase: handleExpressionPhase,
 	GS_ResultsPhase:    handleResultsPhase,
+	GS_GameOver:        handleGameOver,
 }
 
 func handleTurnStart(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -286,6 +295,17 @@ func handleResultsPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
+func handleGameOver(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	if !m.player.Ailments.HasAilments() {
+		m.message = "You win! Press [ enter ] to restart the game"
+	}
+	if !m.player.HasLives() {
+		m.message = "You lose! Press [ enter ] to restart the game"
+	}
+
+	return *m, nil
+}
+
 func (m model) processGameState(state GameState, msg tea.Msg) (tea.Model, tea.Cmd) {
 	handler, exists := stateHandlers[state]
 	if !exists {
@@ -294,19 +314,6 @@ func (m model) processGameState(state GameState, msg tea.Msg) (tea.Model, tea.Cm
 	}
 
 	return handler(&m, msg)
-}
-
-func (m model) processGameOver(msg tea.Msg) (tea.Model, tea.Cmd) {
-	m.resetDice()
-	if !m.player.Ailments.HasAilments() {
-		m.message = "You win! Press [ enter ] to restart the game"
-	}
-	if !m.player.HasLives() {
-		m.message = "You lose! Press [ enter ] to restart the game"
-	}
-
-	m.turn.stack.Push(GS_GameOver)
-	return m, nil
 }
 
 /*************************************
@@ -334,6 +341,7 @@ func (m *model) submitExpression() {
 /*************************************
 * Key handlers
 *************************************/
+// On [ enter ] press
 func (m *model) handleEnterKey(state GameState) {
 	switch state {
 	case GS_RollPhase:
@@ -345,15 +353,17 @@ func (m *model) handleEnterKey(state GameState) {
 	}
 }
 
+// On [ space ] press
 func (m *model) handleSpaceKey(state GameState) {
 	switch state {
 	case GS_RollPhase:
 		m.toggleDiceSelection()
 	case GS_ResultsPhase:
-		m.incrementTurn()
+		m.endTurn()
 	}
 }
 
+// On [ r ] press
 func (m *model) handleRollKey(state GameState) {
 	if state == GS_TurnStart {
 		m.turn.stack.Pop()
@@ -361,18 +371,21 @@ func (m *model) handleRollKey(state GameState) {
 	}
 }
 
+// On [ left key ] press
 func (m *model) handleLeftKey(state GameState) {
 	if state == GS_RollPhase && m.cursor > 0 {
 		m.cursor--
 	}
 }
 
+// On [ right ] press
 func (m *model) handleRightKey(state GameState) {
 	if state == GS_RollPhase && m.cursor < len(m.choices)-1 {
 		m.cursor++
 	}
 }
 
+// Forward [ ] key presses
 func (m *model) handleKeyPress(key tea.KeyMsg, state GameState) tea.Cmd {
 	switch key.String() {
 	case "ctrl+c", "q":
@@ -432,7 +445,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Process current game state
-	// logger.LogInfo("I made it here", currentState)
 	return m.processGameState(currentState, msg)
 }
 

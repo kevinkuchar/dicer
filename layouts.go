@@ -191,12 +191,12 @@ func (m model) getInputWindow(message string) string {
 	turnState, _ := m.turn.stack.Top()
 
 	choices := ""
-	if turnState == GS_DiceChoice {
+	if turnState == GS_RollPhase {
 		choices = m.getChoices()
 	}
 
 	expression := ""
-	if turnState == GS_TypeExpression {
+	if turnState == GS_ExpressionPhase {
 		expression = m.textInput.View()
 	}
 

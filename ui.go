@@ -182,11 +182,11 @@ func (m model) getChoices() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, boxes...)
 }
 
-func (m model) getMainContent(message string, turn *Turn) string {
+func (m model) getInputWindow(message string) string {
 	contentStyle := lipgloss.NewStyle().
 		Padding(1, 2)
 
-	dice := m.getDice(turn.dice)
+	dice := m.getDice(m.turn.dice)
 
 	turnState, _ := m.turn.stack.Top()
 

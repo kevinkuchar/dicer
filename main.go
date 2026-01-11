@@ -1,7 +1,6 @@
 package main
 
 import (
-	"dicer/pkg/logger"
 	"dicer/pkg/math"
 	"dicer/pkg/stack"
 	"fmt"
@@ -19,24 +18,12 @@ type GameState int
 
 const (
 	GS_TurnStart          GameState = iota
-	GS_DiceChoice                   // User selects what to do with each dice
-	GS_TypeExpression               // Type expression into terminal
-	GS_EvaluateExpression           // Evaluate expression
-	GS_TurnEnd                      // Turn ended
+	GS_DiceChoice                   // Re-roll selection phase
+	GS_TypeExpression               // Gather user input for expression
+	GS_EvaluateExpression           // Validate input and evaluate outcome of expression
+	GS_TurnEnd                      // Create a new turn
 	GS_GameOver                     // Game over
 )
-
-func CreateTurnStack() *stack.ArrayStack[GameState] {
-	stack := stack.CreateArrayStack[GameState]()
-
-	stack.Push(GS_TurnEnd)
-	stack.Push(GS_EvaluateExpression)
-	stack.Push(GS_TypeExpression)
-	stack.Push(GS_DiceChoice)
-	stack.Push(GS_TurnStart)
-
-	return stack
-}
 
 /*************************************
 * Game Configuration
@@ -104,7 +91,7 @@ func (ailments *Ailments) RemoveAilment(result int) {
 }
 
 /*************************************
-* Turn Based Structs
+* Turn
 *************************************/
 type Turn struct {
 	round          int
@@ -123,6 +110,18 @@ func CreateTurn(round int) *Turn {
 	}
 
 	return turn
+}
+
+func CreateTurnStack() *stack.ArrayStack[GameState] {
+	stack := stack.CreateArrayStack[GameState]()
+
+	stack.Push(GS_TurnEnd)
+	stack.Push(GS_EvaluateExpression)
+	stack.Push(GS_TypeExpression)
+	stack.Push(GS_DiceChoice)
+	stack.Push(GS_TurnStart)
+
+	return stack
 }
 
 func (t *Turn) RollDice() {
@@ -150,6 +149,9 @@ func (t *Turn) ApplyResult(player *Player) {
 	}
 }
 
+/*************************************
+* Dice
+*************************************/
 type Dice struct {
 	value int
 }
@@ -202,7 +204,7 @@ func initialModel() model {
 	}
 }
 
-func (m *model) NewTurn() {
+func (m *model) IncrementTurn() {
 	m.turn = CreateTurn(m.turn.round + 1)
 	m.textInput.Reset()
 	m.selected = make(map[int]struct{})
@@ -271,7 +273,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selected[m.cursor] = struct{}{}
 				}
 			case GS_TurnEnd:
-				m.NewTurn()
+				m.IncrementTurn()
 			}
 		}
 	}
@@ -326,23 +328,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	header := m.getHeader(m.width)
 	sidebar := m.getStatusSidebar(m.player.Lives, m.roundNumber)
-	mainContent := m.getMainContent(m.message, m.turn)
+	inputWindow := m.getInputWindow(m.message)
 	ailmentsBar := m.getAilmentsBar(m.width, m.player.Ailments)
 
-	return m.renderGameLayout(m.width, m.height, header, sidebar, mainContent, ailmentsBar)
-}
-
-/*************************************
-* Turn Functions
-*************************************/
-func DoTurnEnd(player Player) {
-	if !player.Ailments.HasAilments() {
-		logger.LogSuccess("Wow, you win!")
-	}
-
-	if !player.HasLives() {
-		logger.LogError("Darn, you lose!")
-	}
+	return m.renderGameLayout(m.width, m.height, header, sidebar, inputWindow, ailmentsBar)
 }
 
 /*************************************

@@ -169,6 +169,8 @@ type model struct {
 	roundNumber int
 	player      Player
 	turn        *Turn
+	width       int
+	height      int
 }
 
 func initialModel() model {
@@ -176,12 +178,13 @@ func initialModel() model {
 		roundNumber: 1,
 		player:      CreatePlayer(),
 		turn:        CreateTurn(1),
+		width:       80,
+		height:      24,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	// Just return `nil`, which means "no I/O right now, please."
-	return nil
+	return tea.EnterAltScreen
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -190,6 +193,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
 
 	// Is it a key press?
 	case tea.KeyMsg:
@@ -210,44 +217,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	header := getHeader(m.width)
+	sidebar := getStatusSidebar(m.player.Lives, m.roundNumber, m.player.Ailments)
+	mainContent := getMainContent()
 
-	logo := getLogo()
-	statusGrid := getStatusGrid(m.player.Lives, m.roundNumber, m.player.Ailments)
-
-	// Combine logo and grid with some spacing
-	return lipgloss.JoinVertical(lipgloss.Left, logo, statusGrid)
+	return renderGameLayout(m.width, m.height, header, sidebar, mainContent)
 }
 
 /**********************************
 * Vibe Coded UI Components
 **********************************/
-func getLogo() string {
-	// Pastel color scheme
+func getHeader(width int) string {
 	pastelGreen := lipgloss.Color("#9FE2BF")
 	pastelBlue := lipgloss.Color("#87CEEB")
 
-	// Style for "Dice" part (green)
 	diceStyle := lipgloss.NewStyle().
 		Foreground(pastelGreen).
 		Bold(true)
 
-	// Style for "r" part (blue)
 	rStyle := lipgloss.NewStyle().
 		Foreground(pastelBlue).
 		Bold(true)
 
-	// Combine the styled parts
-	logoText := diceStyle.Render("///////////////////// Dice") + rStyle.Render("r ///////////////////////")
+	logoText := diceStyle.Render("Dice") + rStyle.Render("r")
 
-	// Add padding around the whole logo
-	paddingStyle := lipgloss.NewStyle().Padding(1)
+	headerStyle := lipgloss.NewStyle().
+		Width(width).
+		Align(lipgloss.Center).
+		Padding(1, 0).
+		Border(lipgloss.NormalBorder()).
+		BorderBottom(true).
+		BorderTop(false).
+		BorderLeft(false).
+		BorderRight(false)
 
-	return paddingStyle.Render(logoText)
+	return headerStyle.Render(logoText)
 }
 
-func getStatusGrid(lives int, turnNumber int, ailments *Ailments) string {
+func getStatusSidebar(lives int, turnNumber int, ailments *Ailments) string {
 	textColor := lipgloss.Color("#EAEAEA")
-	// Pastel color scheme
 	red := lipgloss.Color("#963c31")
 	blue := lipgloss.Color("#45657A")
 	gray := lipgloss.Color("#333333")
@@ -257,45 +265,83 @@ func getStatusGrid(lives int, turnNumber int, ailments *Ailments) string {
 			Background(background).
 			Foreground(textColor).
 			Padding(1, 2).
-			Align(lipgloss.Center)
+			Align(lipgloss.Center).
+			Width(25) // Fixed width for sidebar sections
 	}
-	// Style for Turn Number section
-	turnStyle := createStyle(blue)
 
-	// Style for Lives section
 	livesStyle := createStyle(red)
-
-	// Style for Ailments section
+	turnStyle := createStyle(blue)
 	ailmentsStyle := createStyle(gray)
 
-	// Build Lives content
+	// Build content
 	livesText := fmt.Sprintf("Lives: %d", lives)
-	livesView := livesStyle.Render(livesText)
-
-	// Build Turn Number content
 	turnText := fmt.Sprintf("Turn: %d", turnNumber)
-	turnView := turnStyle.Render(turnText)
 
-	// Build Ailments content - show all ailment numbers in a row
 	var ailmentNumbers []string
 	for i := range ailments.remaining {
 		if ailments.remaining[i] != REMOVED_AILMENT_VALUE {
 			ailmentNumbers = append(ailmentNumbers, fmt.Sprintf("%d", ailments.remaining[i]))
 		}
 	}
-
 	ailmentsText := "Ailments: "
 	if len(ailmentNumbers) > 0 {
 		ailmentsText += strings.Join(ailmentNumbers, " ")
 	} else {
 		ailmentsText += "None"
 	}
-	ailmentsView := ailmentsStyle.Render(ailmentsText)
 
-	// Join sections horizontally
-	grid := lipgloss.JoinHorizontal(lipgloss.Top, livesView, turnView, ailmentsView)
+	// Stack vertically
+	sidebar := lipgloss.JoinVertical(
+		lipgloss.Left,
+		livesStyle.Render(livesText),
+		turnStyle.Render(turnText),
+		ailmentsStyle.Render(ailmentsText),
+	)
 
-	return grid
+	return sidebar
+}
+
+func getMainContent() string {
+	// Placeholder - replace with your actual game content
+	contentStyle := lipgloss.NewStyle().
+		Padding(1, 2)
+
+	return contentStyle.Render("Game content goes here...\nQuestions and interactions flow here.")
+}
+
+func renderGameLayout(width, height int, header, sidebar, mainContent string) string {
+	sidebarWidth := 27 // Width of sidebar (25 + padding)
+	headerHeight := lipgloss.Height(header)
+	availableHeight := height - headerHeight - 2 // Account for borders
+	contentWidth := width - sidebarWidth - 4     // Account for borders and sidebar
+
+	// Style the main content area
+	contentStyle := lipgloss.NewStyle().
+		Width(contentWidth).
+		Height(availableHeight).
+		Padding(1, 2)
+
+	styledContent := contentStyle.Render(mainContent)
+
+	// Create the body: main content + sidebar
+	body := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		styledContent,
+		sidebar,
+	)
+
+	// Combine header and body
+	ui := lipgloss.JoinVertical(lipgloss.Left, header, body)
+
+	// Create the outer border box
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#555555")).
+		Width(width).
+		Height(height)
+
+	// Wrap in border
+	return borderStyle.Render(ui)
 }
 
 /*************************************

@@ -9,10 +9,9 @@ import (
 	"math/rand/v2"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 /*************************************
@@ -22,10 +21,7 @@ type GameState int
 
 const (
 	GS_TurnStart          GameState = iota
-	GS_RollDice                     // Shows prompt to let begin roll
-	GS_ViewRoll                     // Outputs roll for viewing
 	GS_DiceChoice                   // User selects what to do with each dice
-	GS_ViewFinalRoll                // Outputs final roll for viewing
 	GS_TypeExpression               // Type expression into terminal
 	GS_EvaluateExpression           // Evaluate expression
 	GS_ApplyResult                  // Applies result against ailments and lives
@@ -41,10 +37,7 @@ func CreateTurnStack() *stack.ArrayStack[GameState] {
 	stack.Push(GS_ApplyResult)
 	stack.Push(GS_EvaluateExpression)
 	stack.Push(GS_TypeExpression)
-	stack.Push(GS_ViewFinalRoll)
 	stack.Push(GS_DiceChoice)
-	stack.Push(GS_ViewRoll)
-	stack.Push(GS_RollDice)
 	stack.Push(GS_TurnStart)
 
 	return stack
@@ -137,6 +130,14 @@ func CreateTurn(round int) *Turn {
 	return turn
 }
 
+func (t *Turn) RollDice() {
+	dice := make([]Dice, NUM_DICE)
+	dice[0] = CreateAndRollDie()
+	dice[1] = CreateAndRollDie()
+	dice[2] = CreateAndRollDie()
+	t.dice = dice
+}
+
 type Dice struct {
 	value int
 }
@@ -151,22 +152,16 @@ func CreateAndRollDie() Dice {
 	return die
 }
 
-func (t Turn) PrintRoll() {
-	var sb strings.Builder
-	for i := range t.dice {
-		sb.WriteString("[ ")
-		sb.WriteString(fmt.Sprintf("%d", t.dice[i].value))
-		sb.WriteString(" ]")
-		sb.WriteString(" ")
-	}
-	logger.LogSuccess(sb.String())
-}
-
 /*************************************
 * Bubble Tea
 *************************************/
 type model struct {
 	roundNumber int
+	choices     []string
+	selected    map[int]struct{}
+	cursor      int
+	textInput   textinput.Model
+	message     string
 	player      Player
 	turn        *Turn
 	width       int
@@ -174,12 +169,19 @@ type model struct {
 }
 
 func initialModel() model {
+	ti := textinput.New()
+	ti.Placeholder = "( 5 + 2 ) / 1"
+	ti.Focus()
+	ti.CharLimit = 24
+	ti.Width = 20
+
 	return model{
 		roundNumber: 1,
+		selected:    make(map[int]struct{}),
+		choices:     []string{"", "", ""},
+		textInput:   ti,
 		player:      CreatePlayer(),
 		turn:        CreateTurn(1),
-		width:       80,
-		height:      24,
 	}
 }
 
@@ -188,27 +190,82 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.player.Ailments.HasAilments() && m.player.HasLives() {
+	// if m.player.Ailments.HasAilments() && m.player.HasLives() {
 
-	}
-
+	// }
+	startingState, _ := m.turn.stack.Top()
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
 
-	// Is it a key press?
+	// Key listners
 	case tea.KeyMsg:
-
-		// Cool, what was the actual key pressed?
 		switch msg.String() {
-		case "r":
-			m.player.Lives--
 		// These keys should exit the program.
 		case "ctrl+c", "q":
 			return m, tea.Quit
+
+		// The "r" key rolls the dice
+		case "r":
+			if startingState == GS_TurnStart {
+				m.turn.stack.Pop()
+				m.turn.RollDice()
+			}
+
+		// The "left" and "h" keys move the cursor left
+		case "left", "h":
+			if startingState == GS_DiceChoice && m.cursor > 0 {
+				m.cursor--
+			}
+
+		// The "right" and "l" keys move the cursor right
+		case "right", "l":
+			if startingState == GS_DiceChoice && m.cursor < len(m.choices)-1 {
+				m.cursor++
+			}
+
+		// The "enter" key submits user input
+		case "enter":
+			switch startingState {
+			case GS_DiceChoice:
+				for i := range m.selected {
+					m.turn.dice[i].Roll()
+				}
+				m.turn.stack.Pop()
+			case GS_TypeExpression:
+				m.turn.stack.Pop()
+			}
+
+		// The spacebar selects user choices
+		case " ":
+			if startingState == GS_DiceChoice {
+				_, ok := m.selected[m.cursor]
+				if ok {
+					delete(m.selected, m.cursor)
+				} else {
+					m.selected[m.cursor] = struct{}{}
+				}
+			}
 		}
+	}
+
+	// Game state
+	currentState, _ := m.turn.stack.Top()
+	var cmd tea.Cmd
+
+	switch currentState {
+	case GS_TurnStart:
+		m.message = "Press r to roll dice"
+	case GS_DiceChoice:
+		m.message = "Select which die to reroll"
+	case GS_TypeExpression:
+		m.message = "Type your expression using ( ) * / + -"
+		m.textInput, cmd = m.textInput.Update(msg)
+		return m, cmd
+	case GS_EvaluateExpression:
+		m.message = "Evaluating expression..."
 	}
 
 	// Return the updated model to the Bubble Tea runtime for processing.
@@ -217,161 +274,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	header := getHeader(m.width)
-	sidebar := getStatusSidebar(m.player.Lives, m.roundNumber, m.player.Ailments)
-	mainContent := getMainContent()
+	header := m.getHeader(m.width)
+	sidebar := m.getStatusSidebar(m.player.Lives, m.roundNumber)
+	mainContent := m.getMainContent(m.message, m.turn)
+	ailmentsBar := m.getAilmentsBar(m.width, m.player.Ailments)
 
-	return renderGameLayout(m.width, m.height, header, sidebar, mainContent)
-}
-
-/**********************************
-* Vibe Coded UI Components
-**********************************/
-func getHeader(width int) string {
-	pastelGreen := lipgloss.Color("#9FE2BF")
-	pastelBlue := lipgloss.Color("#87CEEB")
-
-	diceStyle := lipgloss.NewStyle().
-		Foreground(pastelGreen).
-		Bold(true)
-
-	rStyle := lipgloss.NewStyle().
-		Foreground(pastelBlue).
-		Bold(true)
-
-	logoText := diceStyle.Render("Dice") + rStyle.Render("r")
-
-	headerStyle := lipgloss.NewStyle().
-		Width(width).
-		Align(lipgloss.Center).
-		Padding(1, 0).
-		Border(lipgloss.NormalBorder()).
-		BorderBottom(true).
-		BorderTop(false).
-		BorderLeft(false).
-		BorderRight(false)
-
-	return headerStyle.Render(logoText)
-}
-
-func getStatusSidebar(lives int, turnNumber int, ailments *Ailments) string {
-	textColor := lipgloss.Color("#EAEAEA")
-	red := lipgloss.Color("#963c31")
-	blue := lipgloss.Color("#45657A")
-	gray := lipgloss.Color("#333333")
-
-	createStyle := func(background lipgloss.Color) lipgloss.Style {
-		return lipgloss.NewStyle().
-			Background(background).
-			Foreground(textColor).
-			Padding(1, 2).
-			Align(lipgloss.Center).
-			Width(25) // Fixed width for sidebar sections
-	}
-
-	livesStyle := createStyle(red)
-	turnStyle := createStyle(blue)
-	ailmentsStyle := createStyle(gray)
-
-	// Build content
-	livesText := fmt.Sprintf("Lives: %d", lives)
-	turnText := fmt.Sprintf("Turn: %d", turnNumber)
-
-	var ailmentNumbers []string
-	for i := range ailments.remaining {
-		if ailments.remaining[i] != REMOVED_AILMENT_VALUE {
-			ailmentNumbers = append(ailmentNumbers, fmt.Sprintf("%d", ailments.remaining[i]))
-		}
-	}
-	ailmentsText := "Ailments: "
-	if len(ailmentNumbers) > 0 {
-		ailmentsText += strings.Join(ailmentNumbers, " ")
-	} else {
-		ailmentsText += "None"
-	}
-
-	// Stack vertically
-	sidebar := lipgloss.JoinVertical(
-		lipgloss.Left,
-		livesStyle.Render(livesText),
-		turnStyle.Render(turnText),
-		ailmentsStyle.Render(ailmentsText),
-	)
-
-	return sidebar
-}
-
-func getMainContent() string {
-	// Placeholder - replace with your actual game content
-	contentStyle := lipgloss.NewStyle().
-		Padding(1, 2)
-
-	return contentStyle.Render("Game content goes here...\nQuestions and interactions flow here.")
-}
-
-func renderGameLayout(width, height int, header, sidebar, mainContent string) string {
-	sidebarWidth := 27 // Width of sidebar (25 + padding)
-	headerHeight := lipgloss.Height(header)
-	availableHeight := height - headerHeight - 2 // Account for borders
-	contentWidth := width - sidebarWidth - 4     // Account for borders and sidebar
-
-	// Style the main content area
-	contentStyle := lipgloss.NewStyle().
-		Width(contentWidth).
-		Height(availableHeight).
-		Padding(1, 2)
-
-	styledContent := contentStyle.Render(mainContent)
-
-	// Create the body: main content + sidebar
-	body := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		styledContent,
-		sidebar,
-	)
-
-	// Combine header and body
-	ui := lipgloss.JoinVertical(lipgloss.Left, header, body)
-
-	// Create the outer border box
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#555555")).
-		Width(width).
-		Height(height)
-
-	// Wrap in border
-	return borderStyle.Render(ui)
+	return m.renderGameLayout(m.width, m.height, header, sidebar, mainContent, ailmentsBar)
 }
 
 /*************************************
 * Turn Functions
 *************************************/
-func DoTurnStart(player Player, turn Turn) {
-	var sb strings.Builder
-	for i := range player.Ailments.remaining {
-		if player.Ailments.remaining[i] != REMOVED_AILMENT_VALUE {
-			sb.WriteString(fmt.Sprintf("[ %d ]", player.Ailments.remaining[i]))
-		}
-	}
-
-	logger.LogInfo("Starting Turn:", turn.round)
-	logger.LogInfo("Ailments:", sb.String())
-	logger.LogInfo("Lives:", player.Lives)
-	time.Sleep(2 * time.Second)
-}
-
-func DoRollDice(turn *Turn) {
-	dice := make([]Dice, NUM_DICE)
-	dice[0] = CreateAndRollDie()
-	dice[1] = CreateAndRollDie()
-	dice[2] = CreateAndRollDie()
-	turn.dice = dice
-}
-
-func DoViewRoll(turn *Turn) {
-	turn.PrintRoll()
-}
 
 func DoDiceChoice(turn *Turn) {
 	reader := bufio.NewReader(os.Stdin)

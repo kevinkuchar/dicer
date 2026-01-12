@@ -20,6 +20,7 @@ const COLOR_LOGO_BLUE = lipgloss.Color("#87CEEB")
 const COLOR_TEXT = lipgloss.Color("#EAEAEA")
 const COLOR_RED = lipgloss.Color("#963c31")
 const COLOR_BLUE = lipgloss.Color("#45657A")
+const COLOR_YELLOW = lipgloss.Color("#D9C380")
 const COLOR_AILMENT_ACTIVE = lipgloss.Color("#56787a")
 const COLOR_AILMENT_INACTIVE = lipgloss.Color("#333333")
 
@@ -47,7 +48,7 @@ func (m model) getHeader(width int) string {
 	return headerStyle.Render(logoText)
 }
 
-func (m model) getStatusSidebar(lives int, turnNumber int) string {
+func (m model) getStatusSidebar() string {
 	createStyle := func(background lipgloss.Color) lipgloss.Style {
 		return lipgloss.NewStyle().
 			Background(background).
@@ -56,6 +57,7 @@ func (m model) getStatusSidebar(lives int, turnNumber int) string {
 			Align(lipgloss.Center).
 			Width(SIDEBAR_WIDTH).
 			MarginTop(1).
+			MarginRight(1).
 			Bold(true)
 	}
 
@@ -63,8 +65,8 @@ func (m model) getStatusSidebar(lives int, turnNumber int) string {
 	turnStyle := createStyle(COLOR_BLUE)
 
 	// Build content
-	livesText := fmt.Sprintf("Lives: %d", lives)
-	turnText := fmt.Sprintf("Turn: %d", turnNumber)
+	livesText := fmt.Sprintf("Lives: %d", m.player.Lives)
+	turnText := fmt.Sprintf("Turn: %d", m.roundNumber)
 
 	// Stack vertically
 	sidebar := lipgloss.JoinVertical(
@@ -76,7 +78,8 @@ func (m model) getStatusSidebar(lives int, turnNumber int) string {
 	return sidebar
 }
 
-func (m model) getAilmentsBar(width int, ailments *Ailments) string {
+func (m model) getAilmentsBar(width int) string {
+	ailments := m.player.Ailments
 	availableWidth := width - len(ailments.remaining) - 1
 	boxWidth := availableWidth / len(ailments.remaining)
 
@@ -182,7 +185,7 @@ func (m model) getChoices() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, boxes...)
 }
 
-func (m model) getInputWindow(message string) string {
+func (m model) getBoard(message string) string {
 	contentStyle := lipgloss.NewStyle().
 		Padding(1, 2)
 
@@ -211,36 +214,50 @@ func (m model) getInputWindow(message string) string {
 	return mainContent
 }
 
-func (m model) renderGameLayout(width, height int, header, sidebar, mainContent, ailmentsBar string) string {
-	sidebarWidth := SIDEBAR_WIDTH
-	headerHeight := lipgloss.Height(header)
-	ailmentsBarHeight := lipgloss.Height(ailmentsBar)
-	availableHeight := height - headerHeight - ailmentsBarHeight
-	contentWidth := width - sidebarWidth
+func (m model) getInstructions() string {
+	style := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(COLOR_YELLOW))
+
+	return style.Render(m.instructions)
+}
+
+func (m model) renderGameLayout(width, height int) string {
+	header := m.getHeader(m.width)
+	board := m.getBoard(m.message)
+	sidebar := m.getStatusSidebar()
+	ailmentsBar := m.getAilmentsBar(m.width)
+	instructions := m.getInstructions()
+
+	// Board Math
+	boardHeight := height - lipgloss.Height(header) - lipgloss.Height(ailmentsBar)
+	boardWidth := width - SIDEBAR_WIDTH - 1
 
 	// Style the main content area
-	contentStyle := lipgloss.NewStyle().
-		Width(contentWidth).
-		Height(availableHeight).
+	boardStyle := lipgloss.NewStyle().
+		Width(boardWidth).
+		Height(boardHeight).
 		Padding(1, 2)
 
-	styledContent := contentStyle.Render(mainContent)
+	boardContent := boardStyle.Render(board)
 
 	// Create the body: main content + sidebar
 	body := lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		styledContent,
+		boardContent,
 		sidebar,
 	)
-
-	debug := m.debug
-
 	// Combine header, body, and ailments bar
-	ui := lipgloss.JoinVertical(lipgloss.Left, header, body, ailmentsBar, debug)
+	ui := lipgloss.JoinVertical(
+		lipgloss.Left,
+		header,
+		body,
+		ailmentsBar,
+		instructions,
+	)
 
-	mainStyle := lipgloss.NewStyle().
+	fullWindowStyle := lipgloss.NewStyle().
 		Width(width).
 		Height(height)
 
-	return mainStyle.Render(ui)
+	return fullWindowStyle.Render(ui)
 }

@@ -1,15 +1,14 @@
 package main
 
 import (
-	"bufio"
-	"dicer/pkg/logger"
 	"dicer/pkg/math"
-	"dicer/pkg/stack"
+	"dicer/pkg/single"
 	"fmt"
 	"math/rand/v2"
 	"os"
-	"strings"
-	"time"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 /*************************************
@@ -18,34 +17,12 @@ import (
 type GameState int
 
 const (
-	GS_TurnStart          GameState = iota
-	GS_RollDice                     // Shows prompt to let begin roll
-	GS_ViewRoll                     // Outputs roll for viewing
-	GS_DiceChoice                   // User selects what to do with each dice
-	GS_ViewFinalRoll                // Outputs final roll for viewing
-	GS_TypeExpression               // Type expression into terminal
-	GS_EvaluateExpression           // Evaluate expression
-	GS_ApplyResult                  // Applies result against ailments and lives
-	GS_ShowTurnResult               // Shows player status as result of turn
-	GS_TurnEnd                      // Yee
+	GS_TurnStart       GameState = iota
+	GS_RollPhase                 // Re-roll selection phase
+	GS_ExpressionPhase           // Gather user input for expression
+	GS_ResultsPhase              // Show results of expression
+	GS_GameOver                  // Game over state
 )
-
-func CreateTurnStack() *stack.ArrayStack[GameState] {
-	stack := stack.CreateArrayStack[GameState]()
-
-	stack.Push(GS_TurnEnd)
-	stack.Push(GS_ShowTurnResult)
-	stack.Push(GS_ApplyResult)
-	stack.Push(GS_EvaluateExpression)
-	stack.Push(GS_TypeExpression)
-	stack.Push(GS_ViewFinalRoll)
-	stack.Push(GS_DiceChoice)
-	stack.Push(GS_ViewRoll)
-	stack.Push(GS_RollDice)
-	stack.Push(GS_TurnStart)
-
-	return stack
-}
 
 /*************************************
 * Game Configuration
@@ -56,74 +33,8 @@ const NUM_DICE = 3
 const REMOVED_AILMENT_VALUE = -1
 
 /*************************************
-* Player
+* Dice
 *************************************/
-type Player struct {
-	Lives    int
-	Ailments *Ailments
-}
-
-func CreatePlayer() Player {
-	var player *Player = &Player{Lives: MAX_LIVES}
-	player.Ailments = CreateAilments()
-
-	return *player
-}
-
-func (player *Player) HasLives() bool {
-	return player.Lives > 0
-}
-
-/*************************************
-* Ailments
-*************************************/
-type Ailments struct {
-	remaining []int
-}
-
-func CreateAilments() *Ailments {
-	slice := make([]int, NUM_AILMENTS)
-
-	for i := range slice {
-		slice[i] = i + 1
-	}
-
-	ailments := &Ailments{remaining: slice}
-	return ailments
-}
-
-func (ailments *Ailments) HasAilments() bool {
-	for a := range ailments.remaining {
-		if ailments.remaining[a] != REMOVED_AILMENT_VALUE {
-			return true
-		}
-	}
-	return false
-}
-
-func (ailments *Ailments) HasAilment(num int) bool {
-	if len(ailments.remaining) < num || num < 1 {
-		return false
-	}
-	return ailments.remaining[num-1] != REMOVED_AILMENT_VALUE
-}
-
-func (ailments *Ailments) RemoveAilment(result int) {
-	ailments.remaining[result-1] = REMOVED_AILMENT_VALUE
-}
-
-/*************************************
-* Turn Based Structs
-*************************************/
-type Turn struct {
-	round          int
-	dice           []Dice
-	result         int
-	expression     string
-	removedAilment bool
-	lostLife       bool
-}
-
 type Dice struct {
 	value int
 }
@@ -138,143 +49,347 @@ func CreateAndRollDie() Dice {
 	return die
 }
 
-func (t Turn) PrintRoll() {
-	var sb strings.Builder
-	for i := range t.dice {
-		sb.WriteString("[ ")
-		sb.WriteString(fmt.Sprintf("%d", t.dice[i].value))
-		sb.WriteString(" ]")
-		sb.WriteString(" ")
+/*************************************
+* Bubble Tea Model
+*************************************/
+type model struct {
+	roundNumber  int
+	choices      []string
+	selected     map[int]struct{}
+	cursor       int
+	textInput    textinput.Model
+	message      string
+	player       Player
+	turn         *Turn
+	width        int
+	height       int
+	instructions string
+	debug        string
+}
+
+func initialModel() model {
+	ti := textinput.New()
+	ti.Placeholder = "( x + y ) / z"
+	ti.Focus()
+	ti.CharLimit = 24
+	ti.Width = 24
+
+	var choices []string
+	for i := 0; i < NUM_DICE; i++ {
+		choices = append(choices, "")
 	}
-	logger.LogSuccess(sb.String())
+
+	return model{
+		roundNumber: 1,
+		selected:    make(map[int]struct{}),
+		choices:     choices,
+		textInput:   ti,
+		player:      CreatePlayer(MAX_LIVES, NUM_AILMENTS),
+		turn:        CreateTurn(1),
+		message:     "Press any [ key ] to begin",
+	}
+}
+
+func newModel(current *model) model {
+	model := initialModel()
+	model.height = current.height
+	model.width = current.width
+	return model
 }
 
 /*************************************
-* Turn Functions
+* Model Utilities
 *************************************/
-func DoTurnStart(player Player, turn Turn) {
-	var sb strings.Builder
-	for i := range player.Ailments.remaining {
-		if player.Ailments.remaining[i] != REMOVED_AILMENT_VALUE {
-			sb.WriteString(fmt.Sprintf("[ %d ]", player.Ailments.remaining[i]))
+func (m *model) checkGameOver() bool {
+	if !m.player.Ailments.HasAilments() {
+		return true
+	}
+	if !m.player.HasLives() {
+		return true
+	}
+	return false
+}
+
+func (m *model) endTurn() {
+	// Check game over condition first
+	if isGameOver := m.checkGameOver(); isGameOver != false {
+		m.turn.stack.Push(GS_GameOver)
+		return
+	}
+
+	// Set state for next turn
+	next := m.roundNumber + 1
+	m.roundNumber = next
+	m.turn = CreateTurn(next)
+	m.textInput.Reset()
+	m.selected = make(map[int]struct{})
+	m.cursor = 0
+}
+
+func (m *model) getCurrentState() (GameState, error) {
+	return m.turn.stack.Top()
+}
+
+func (m *model) resetDice() {
+	m.turn.dice = nil
+}
+
+func (m *model) isValidExpression() bool {
+	exp := m.turn.expression
+
+	isBalanced := math.IsBalancedParens(exp)
+	if !isBalanced {
+		m.debug = "Parenthesis not balanced"
+		return false
+	}
+
+	numbers := &single.LinkedList{}
+	for num := range m.turn.dice {
+		numbers.InsertAtHead(m.turn.dice[num].value)
+	}
+
+	numOperators := 0
+
+	for _, char := range exp {
+		if math.IsOperand(string(char)) {
+			numbers.RemoveVal(int(char - '0'))
+		}
+		if math.IsOperator(string(char)) {
+			numOperators++
 		}
 	}
 
-	logger.LogInfo("Starting Turn:", turn.round)
-	logger.LogInfo("Ailments:", sb.String())
-	logger.LogInfo("Lives:", player.Lives)
-	time.Sleep(2 * time.Second)
+	if numbers.Head != nil {
+		m.debug = "Expression doesn't include all dice rolls"
+		return false
+	}
+
+	if numOperators != NUM_DICE-1 {
+		m.debug = "Too many operators"
+		return false
+	}
+
+	m.debug = ""
+	return true
 }
 
-func DoRollDice(turn *Turn) {
-	dice := make([]Dice, NUM_DICE)
-	dice[0] = CreateAndRollDie()
-	dice[1] = CreateAndRollDie()
-	dice[2] = CreateAndRollDie()
-	turn.dice = dice
+func (m *model) submitExpression() {
+	m.turn.expression = m.textInput.Value()
+
+	if !m.isValidExpression() {
+		m.turn.stack.Push(GS_ExpressionPhase)
+		m.textInput.Reset()
+		return
+	}
+
+	m.turn.result = math.EvaluateExpression(m.turn.expression)
+	m.turn.ApplyResult(&m.player)
 }
 
-func DoViewRoll(turn *Turn) {
-	turn.PrintRoll()
+func (m *model) toggleDiceSelection() {
+	if _, ok := m.selected[m.cursor]; ok {
+		delete(m.selected, m.cursor)
+	} else {
+		m.selected[m.cursor] = struct{}{}
+	}
 }
 
-func DoDiceChoice(turn *Turn) {
-	reader := bufio.NewReader(os.Stdin)
-	for i := range turn.dice {
-		logger.LogWarning("Reroll die", i+1, "with value", turn.dice[i].value, "? (y/n)")
-		fmt.Print("> ")
-		opt, _ := reader.ReadString('\n')
-		opt = strings.TrimSpace(opt)
+/*************************************
+* State Handlers
+*************************************/
+type StateHandler func(*model, tea.Msg) (tea.Model, tea.Cmd)
 
-		if opt == "y" {
-			turn.dice[i].Roll()
+// stateHandlers maps each game state to its handler function
+var stateHandlers = map[GameState]StateHandler{
+	GS_TurnStart:       handleTurnStart,
+	GS_RollPhase:       handleRollPhase,
+	GS_ExpressionPhase: handleExpressionPhase,
+	GS_ResultsPhase:    handleResultsPhase,
+	GS_GameOver:        handleGameOver,
+}
+
+func handleTurnStart(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.message = "Time to roll!"
+	m.instructions = "Press [ r ] to roll the dice"
+	return *m, nil
+}
+
+func handleRollPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.message = "Select which die to re-roll."
+	m.instructions = "[ left arrow ] [ right arrow ] to navigate [ space ] to toggle [ enter ] to submit"
+	return *m, nil
+}
+
+func handleExpressionPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.message = "Type your expression! Valid operators include ( ) * / + -"
+	m.instructions = "[ enter ] to submit"
+	if m.turn.expression != "" {
+		m.message = m.message + "\nInvalid expression. Try again."
+	}
+	m.textInput, _ = m.textInput.Update(msg)
+	return *m, nil
+}
+
+func handleResultsPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.resetDice()
+	enteredText := fmt.Sprintf("You entered %s which evaluates to %d.", m.turn.expression, m.turn.result)
+	var resultText string
+	if m.turn.lostLife {
+		resultText = fmt.Sprintf("You lost a life! %d lives remaining.", m.player.Lives)
+	} else if m.turn.removedAilment {
+		resultText = fmt.Sprintf("Hit! You removed %d.", m.turn.result)
+	}
+	m.message = enteredText + "\n" + resultText
+	m.instructions = "[ space ] to continue"
+	return *m, nil
+}
+
+func handleGameOver(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	if !m.player.Ailments.HasAilments() {
+		m.message = "You win! How good."
+	}
+
+	if !m.player.HasLives() {
+		m.message = "You lose! Bummer."
+	}
+
+	m.instructions = "[ enter ] to restart the game"
+	return *m, nil
+}
+
+func (m model) processGameState(state GameState, msg tea.Msg) (tea.Model, tea.Cmd) {
+	handler, exists := stateHandlers[state]
+	if !exists {
+		// Unknown state
+		return m, nil
+	}
+
+	return handler(&m, msg)
+}
+
+/*************************************
+* Key handlers
+*************************************/
+// On [ enter ] press
+func (m *model) handleEnterKey(state GameState) {
+	switch state {
+	case GS_RollPhase:
+		m.turn.RollSelectedDice(m.selected)
+		m.turn.stack.Pop()
+	case GS_ExpressionPhase:
+		m.submitExpression()
+		m.turn.stack.Pop()
+	}
+}
+
+// On [ space ] press
+func (m *model) handleSpaceKey(state GameState) {
+	switch state {
+	case GS_RollPhase:
+		m.toggleDiceSelection()
+	case GS_ResultsPhase:
+		m.endTurn()
+	}
+}
+
+// On [ r ] press
+func (m *model) handleRollKey(state GameState) {
+	if state == GS_TurnStart {
+		m.turn.stack.Pop()
+		m.turn.RollDice()
+	}
+}
+
+// On [ left key ] press
+func (m *model) handleLeftKey(state GameState) {
+	if state == GS_RollPhase && m.cursor > 0 {
+		m.cursor--
+	}
+}
+
+// On [ right ] press
+func (m *model) handleRightKey(state GameState) {
+	if state == GS_RollPhase && m.cursor < len(m.choices)-1 {
+		m.cursor++
+	}
+}
+
+// Forward [ ] key presses
+func (m *model) handleKeyPress(key tea.KeyMsg, state GameState) tea.Cmd {
+	switch key.String() {
+	case "ctrl+c", "q":
+		return tea.Quit
+
+	case "r":
+		m.handleRollKey(state)
+
+	case "left", "h":
+		m.handleLeftKey(state)
+
+	case "right", "l":
+		m.handleRightKey(state)
+
+	case "enter":
+		m.handleEnterKey(state)
+
+	case " ":
+		m.handleSpaceKey(state)
+	}
+
+	return nil
+}
+
+/*************************************
+* Bubble Tea Functions
+*************************************/
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle window resize early
+	if msg, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+	}
+
+	// Get current state
+	currentState, err := m.getCurrentState()
+	if err != nil {
+		return m, tea.Quit
+	}
+
+	// Handle key messages
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		// Reset Game
+		if keyMsg.String() == "enter" && currentState == GS_GameOver {
+			model := newModel(&m)
+			return model, nil
 		}
-	}
-}
 
-func DoTypeExpression(turn *Turn) {
-	reader := bufio.NewReader(os.Stdin)
-
-	logger.LogWarning("Type the math expression using +  - * / operators")
-	fmt.Print("> ")
-	text, _ := reader.ReadString('\n')
-	text = strings.TrimSpace(text)
-
-	turn.expression = text
-}
-
-func DoEvaluateExpression(turn *Turn) {
-	postfix := math.InfixToPostfix(turn.expression)
-	val, _ := math.EvaluatePostfixExpression(postfix)
-	turn.result = val
-}
-
-func DoApplyResult(player *Player, turn *Turn) {
-	if player.Ailments.HasAilment(turn.result) {
-		player.Ailments.RemoveAilment(turn.result)
-		turn.removedAilment = true
-	} else {
-		player.Lives--
-		turn.lostLife = true
-	}
-}
-
-func DoShowTurnResult(turn Turn) {
-	if turn.removedAilment {
-		logger.LogSuccess("Boom! You removed an ailment", turn.result)
-	} else {
-		logger.LogError("Oh no! You didnt have an ailment equal to", turn.result, "You lose a life!")
-	}
-}
-
-func DoTurnEnd(player Player) {
-	if !player.Ailments.HasAilments() {
-		logger.LogSuccess("Wow, you win!")
+		if cmd := m.handleKeyPress(keyMsg, currentState); cmd != nil {
+			return m, cmd
+		}
+		// Update state after key handling
+		currentState, _ = m.getCurrentState()
 	}
 
-	if !player.HasLives() {
-		logger.LogError("Darn, you lose!")
-	}
+	// Process current game state
+	return m.processGameState(currentState, msg)
+}
+
+func (m model) View() string {
+	return m.renderGameLayout(m.width, m.height)
 }
 
 /*************************************
 * Main Loop
 *************************************/
+func (m model) Init() tea.Cmd {
+	return tea.EnterAltScreen
+}
+
 func main() {
-	player := CreatePlayer()
-	roundNumber := 0
-
-	for player.Ailments.HasAilments() && player.HasLives() {
-		roundNumber++
-		turn := Turn{round: roundNumber}
-		turnStack := CreateTurnStack()
-
-		for !turnStack.IsEmpty() {
-			turnState, _ := turnStack.Top()
-			turnStack.Pop()
-
-			switch turnState {
-			case GS_TurnStart:
-				DoTurnStart(player, turn)
-			case GS_RollDice:
-				DoRollDice(&turn)
-			case GS_ViewRoll:
-				DoViewRoll(&turn)
-			case GS_DiceChoice:
-				DoDiceChoice(&turn)
-			case GS_ViewFinalRoll:
-				DoViewRoll(&turn)
-			case GS_TypeExpression:
-				DoTypeExpression(&turn)
-			case GS_EvaluateExpression:
-				DoEvaluateExpression(&turn)
-			case GS_ApplyResult:
-				DoApplyResult(&player, &turn)
-			case GS_ShowTurnResult:
-				DoShowTurnResult(turn)
-			case GS_TurnEnd:
-				DoTurnEnd(player)
-			}
-		}
+	p := tea.NewProgram(initialModel())
+	if _, err := p.Run(); err != nil {
+		fmt.Printf("Alas, there's been an error: %v", err)
+		os.Exit(1)
 	}
 }

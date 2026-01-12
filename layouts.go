@@ -233,8 +233,10 @@ func (m model) renderGameLayout(width, height int, header, sidebar, mainContent,
 		sidebar,
 	)
 
+	debug := m.debug
+
 	// Combine header, body, and ailments bar
-	ui := lipgloss.JoinVertical(lipgloss.Left, header, body, ailmentsBar)
+	ui := lipgloss.JoinVertical(lipgloss.Left, header, body, ailmentsBar, debug)
 
 	mainStyle := lipgloss.NewStyle().
 		Width(width).

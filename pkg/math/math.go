@@ -12,7 +12,7 @@ import (
 * Postfix expression evaluation
 * Example: EvaluatePostfixExpression("64+")
 *****************************************/
-func isOperator(input string) bool {
+func IsOperator(input string) bool {
 	var operators = map[string]bool{
 		"+": true,
 		"-": true,
@@ -24,7 +24,7 @@ func isOperator(input string) bool {
 	return found
 }
 
-func isOperand(input string) bool {
+func IsOperand(input string) bool {
 	_, err := strconv.Atoi(input)
 	if err == nil {
 		return true
@@ -43,7 +43,7 @@ func EvaluatePostfixExpression(input string) (int, error) {
 			stack.Push(num)
 		}
 
-		found := isOperator(item)
+		found := IsOperator(item)
 		if found {
 			// Evaluate Operand 1
 			operand2, err := stack.Top()
@@ -90,9 +90,9 @@ func InfixToPostfix(input string) string {
 
 	slice := strings.Split(input, " ")
 	for _, item := range slice {
-		if isOperand(item) {
+		if IsOperand(item) {
 			exp = exp + " " + item
-		} else if isOperator(item) {
+		} else if IsOperator(item) {
 			for !stack.IsEmpty() && !isOpeningParenthesisOnStack(stack) && hasEqualOrHigherPrecedence(stack, item) {
 				stackTop, err := stack.Top()
 				if err != nil {
@@ -156,4 +156,26 @@ func hasEqualOrHigherPrecedence(stack *stack.StackList[string], current string) 
 	currentPrec := operators[current]
 
 	return onStackPrec >= currentPrec
+}
+
+func IsBalancedParens(input string) bool {
+	var stack = stack.CreateArrayStack[rune]()
+
+	for _, runeValue := range input {
+		switch runeValue {
+		case '{', '(', '[':
+			stack.Push(runeValue)
+		case '}', ')', ']':
+
+			openRune, _ := stack.Top()
+
+			if stack.IsEmpty() || (openRune == '{' && runeValue != '}' || openRune == '[' && runeValue != ']' || openRune == '(' && runeValue != ')') {
+				return false
+			} else {
+				stack.Pop()
+			}
+		}
+	}
+
+	return stack.IsEmpty()
 }

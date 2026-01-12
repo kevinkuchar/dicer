@@ -2,6 +2,7 @@ package main
 
 import (
 	"dicer/pkg/math"
+	"dicer/pkg/single"
 	"dicer/pkg/stack"
 	"fmt"
 	"math/rand/v2"
@@ -31,63 +32,6 @@ const MAX_LIVES = 1
 const NUM_AILMENTS = 9
 const NUM_DICE = 3
 const REMOVED_AILMENT_VALUE = -1
-
-/*************************************
-* Player
-*************************************/
-type Player struct {
-	Lives    int
-	Ailments *Ailments
-}
-
-func CreatePlayer() Player {
-	var player *Player = &Player{Lives: MAX_LIVES}
-	player.Ailments = CreateAilments()
-
-	return *player
-}
-
-func (player *Player) HasLives() bool {
-	return player.Lives > 0
-}
-
-/*************************************
-* Ailments
-*************************************/
-type Ailments struct {
-	remaining []int
-}
-
-func CreateAilments() *Ailments {
-	slice := make([]int, NUM_AILMENTS)
-
-	for i := range slice {
-		slice[i] = i + 1
-	}
-
-	ailments := &Ailments{remaining: slice}
-	return ailments
-}
-
-func (ailments *Ailments) HasAilments() bool {
-	for a := range ailments.remaining {
-		if ailments.remaining[a] != REMOVED_AILMENT_VALUE {
-			return true
-		}
-	}
-	return false
-}
-
-func (ailments *Ailments) HasAilment(num int) bool {
-	if len(ailments.remaining) < num || num < 1 {
-		return false
-	}
-	return ailments.remaining[num-1] != REMOVED_AILMENT_VALUE
-}
-
-func (ailments *Ailments) RemoveAilment(result int) {
-	ailments.remaining[result-1] = REMOVED_AILMENT_VALUE
-}
 
 /*************************************
 * Turn
@@ -142,7 +86,7 @@ func (t *Turn) ApplyResult(player *Player) {
 		player.Ailments.RemoveAilment(t.result)
 		t.removedAilment = true
 	} else {
-		player.Lives--
+		player.RemoveLife()
 		t.lostLife = true
 	}
 }
@@ -178,6 +122,7 @@ type model struct {
 	turn        *Turn
 	width       int
 	height      int
+	debug       string
 }
 
 func initialModel() model {
@@ -197,14 +142,17 @@ func initialModel() model {
 		selected:    make(map[int]struct{}),
 		choices:     choices,
 		textInput:   ti,
-		player:      CreatePlayer(),
+		player:      CreatePlayer(MAX_LIVES, NUM_AILMENTS),
 		turn:        CreateTurn(1),
 		message:     "Press any [ key ] to begin",
 	}
 }
 
-func (m model) Init() tea.Cmd {
-	return tea.EnterAltScreen
+func newModel(current *model) model {
+	model := initialModel()
+	model.height = current.height
+	model.width = current.width
+	return model
 }
 
 /*************************************
@@ -227,7 +175,6 @@ func (m *model) getCurrentState() (GameState, error) {
 func (m *model) endTurn() {
 	// Check game over condition first
 	if isGameOver := m.checkGameOver(); isGameOver != false {
-		m.resetDice()
 		m.turn.stack.Push(GS_GameOver)
 		return
 	}
@@ -243,6 +190,64 @@ func (m *model) endTurn() {
 
 func (m *model) resetDice() {
 	m.turn.dice = nil
+}
+
+func (m *model) rerollSelectedDice() {
+	for i := range m.selected {
+		m.turn.dice[i].Roll()
+	}
+}
+
+func (m *model) isValidExpression() bool {
+	exp := m.turn.expression
+
+	isBalanced := math.IsBalancedParens(exp)
+	if !isBalanced {
+		m.debug = "Parenthesis not balanced"
+		return false
+	}
+
+	numbers := &single.LinkedList{}
+	for num := range m.turn.dice {
+		numbers.InsertAtHead(m.turn.dice[num].value)
+	}
+
+	numOperators := 0
+
+	for _, char := range exp {
+		if math.IsOperand(string(char)) {
+			numbers.RemoveVal(int(char - '0'))
+		}
+		if math.IsOperator(string(char)) {
+			numOperators++
+		}
+	}
+
+	if numbers.Head != nil {
+		m.debug = "Expression doesn't include all dice rolls"
+		return false
+	}
+
+	if numOperators != NUM_DICE-1 {
+		m.debug = "Too many operators"
+		return false
+	}
+
+	m.debug = ""
+	return true
+}
+
+func (m *model) submitExpression() {
+	m.turn.expression = m.textInput.Value()
+
+	if !m.isValidExpression() {
+		m.turn.stack.Push(GS_ExpressionPhase)
+		m.textInput.Reset()
+		return
+	}
+
+	m.turn.EvaluateExpression()
+	m.turn.ApplyResult(&m.player)
 }
 
 func (m *model) toggleDiceSelection() {
@@ -279,11 +284,16 @@ func handleRollPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func handleExpressionPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.message = "Type your expression and press [ enter ] to submit. Valid operators include ( ) * / + -"
+
+	if m.turn.expression != "" {
+		m.message = m.message + "\nInvalid expression. Try again."
+	}
 	m.textInput, _ = m.textInput.Update(msg)
 	return *m, nil
 }
 
 func handleResultsPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.resetDice()
 	enteredText := fmt.Sprintf("You entered %s which evaluated to %d.", m.turn.expression, m.turn.result)
 	var resultText string
 	if m.turn.lostLife {
@@ -314,28 +324,6 @@ func (m model) processGameState(state GameState, msg tea.Msg) (tea.Model, tea.Cm
 	}
 
 	return handler(&m, msg)
-}
-
-/*************************************
-* State Updaters
-*************************************/
-func (m *model) rerollSelectedDice() {
-	for i := range m.selected {
-		m.turn.dice[i].Roll()
-	}
-}
-
-func (m *model) submitExpression() {
-	m.turn.expression = m.textInput.Value()
-
-	// TODO: Add validation before evaluation
-	// if !isValidExpression(m.turn.expression) {
-	//     m.turn.stack.Push(GS_TypeExpression)
-	//     m.message = "Invalid expression. Try again."
-	// }
-
-	m.turn.EvaluateExpression()
-	m.turn.ApplyResult(&m.player)
 }
 
 /*************************************
@@ -431,9 +419,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		// Reset Game
 		if keyMsg.String() == "enter" && currentState == GS_GameOver {
-			model := initialModel()
-			model.height = m.height
-			model.width = m.width
+			model := newModel(&m)
 			return model, nil
 		}
 
@@ -460,6 +446,10 @@ func (m model) View() string {
 /*************************************
 * Main Loop
 *************************************/
+func (m model) Init() tea.Cmd {
+	return tea.EnterAltScreen
+}
+
 func main() {
 	p := tea.NewProgram(initialModel())
 	if _, err := p.Run(); err != nil {

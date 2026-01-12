@@ -29,8 +29,8 @@ const (
 * Game Configuration
 *************************************/
 const MAX_LIVES = 3
-const NUM_AILMENTS = 9
-const NUM_DICE = 3
+const NUM_AILMENTS = 5
+const NUM_DICE = 4
 const REMOVED_AILMENT_VALUE = -1
 
 /*************************************

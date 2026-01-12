@@ -3,6 +3,7 @@ package main
 import (
 	"dicer/pkg/math"
 	"dicer/pkg/single"
+	"dicer/pkg/stack"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -143,6 +144,12 @@ func (m *model) isValidExpression() bool {
 		return false
 	}
 
+	isSpaceDelimted := isSpaceDelimted(exp)
+	if !isSpaceDelimted {
+		m.debug = "Every character must be separated by a space"
+		return false
+	}
+
 	numbers := &single.LinkedList{}
 	for num := range m.turn.dice {
 		numbers.InsertAtHead(m.turn.dice[num].value)
@@ -194,6 +201,25 @@ func (m *model) toggleDiceSelection() {
 	}
 }
 
+func isSpaceDelimted(exp string) bool {
+	stack := stack.StackList[rune]{}
+
+	for index, runeValue := range exp {
+		if index == 0 {
+			stack.Push(runeValue)
+			continue
+		}
+
+		lastRune, _ := stack.Top()
+		if runeValue != 32 && lastRune != 32 {
+			return false
+		}
+		stack.Push(runeValue)
+	}
+
+	return true
+}
+
 /*************************************
 * State Handlers
 *************************************/
@@ -221,11 +247,11 @@ func handleRollPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func handleExpressionPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
-	m.message = "Type your expression! Valid operators include ( ) * / + -"
+	m.message = "Type your expression! Ensure there is a space between each character. Valid operators include ( ) * / + -"
 	m.instructions = "[ enter ] to submit"
-	if m.turn.expression != "" {
-		m.message = m.message + "\nInvalid expression. Try again."
-	}
+	// if m.turn.expression != "" {
+	// 	m.message = m.message + "\nInvalid expression. Try again."
+	// }
 	m.textInput, _ = m.textInput.Update(msg)
 	return *m, nil
 }

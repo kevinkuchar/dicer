@@ -19,6 +19,7 @@ const COLOR_LOGO_GREEN = lipgloss.Color("#9FE2BF")
 const COLOR_LOGO_BLUE = lipgloss.Color("#87CEEB")
 const COLOR_TEXT = lipgloss.Color("#EAEAEA")
 const COLOR_RED = lipgloss.Color("#963c31")
+const COLOR_BRIGHT_RED = lipgloss.Color("#C24D3F")
 const COLOR_BLUE = lipgloss.Color("#45657A")
 const COLOR_YELLOW = lipgloss.Color("#D9C380")
 const COLOR_AILMENT_ACTIVE = lipgloss.Color("#56787a")
@@ -138,7 +139,6 @@ func (m model) getDice(dice []Dice) string {
 		boxes = append(boxes, boxStyle.Render(fmt.Sprintf("%d", die.value)))
 	}
 
-	// Join boxes horizontally with a small gap
 	return lipgloss.JoinHorizontal(lipgloss.Top, boxes...)
 }
 
@@ -181,7 +181,6 @@ func (m model) getChoices() string {
 		boxes = append(boxes, boxStyle.Render(content))
 	}
 
-	// Join boxes horizontally
 	return lipgloss.JoinHorizontal(lipgloss.Top, boxes...)
 }
 
@@ -214,11 +213,22 @@ func (m model) getBoard(message string) string {
 	return mainContent
 }
 
-func (m model) getInstructions() string {
+func (m model) getInstructions(width int) string {
 	style := lipgloss.NewStyle().
+		Width(width / 2).
+		Align(lipgloss.Left).
 		Foreground(lipgloss.Color(COLOR_YELLOW))
 
 	return style.Render(m.instructions)
+}
+
+func (m model) getDebug(width int) string {
+	style := lipgloss.NewStyle().
+		Width(width / 2).
+		Align(lipgloss.Right).
+		Foreground(lipgloss.Color(COLOR_BRIGHT_RED))
+
+	return style.Render(m.debug)
 }
 
 func (m model) renderGameLayout(width, height int) string {
@@ -226,8 +236,8 @@ func (m model) renderGameLayout(width, height int) string {
 	board := m.getBoard(m.message)
 	sidebar := m.getStatusSidebar()
 	ailmentsBar := m.getAilmentsBar(m.width)
-	instructions := m.getInstructions()
-
+	instructions := m.getInstructions(m.width)
+	debug := m.getDebug(m.width)
 	// Board Math
 	boardHeight := height - lipgloss.Height(header) - lipgloss.Height(ailmentsBar)
 	boardWidth := width - SIDEBAR_WIDTH - 1
@@ -246,13 +256,20 @@ func (m model) renderGameLayout(width, height int) string {
 		boardContent,
 		sidebar,
 	)
+
+	footer := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		instructions,
+		debug,
+	)
+
 	// Combine header, body, and ailments bar
 	ui := lipgloss.JoinVertical(
 		lipgloss.Left,
 		header,
 		body,
 		ailmentsBar,
-		instructions,
+		footer,
 	)
 
 	fullWindowStyle := lipgloss.NewStyle().

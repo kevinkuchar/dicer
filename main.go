@@ -3,7 +3,6 @@ package main
 import (
 	"dicer/pkg/math"
 	"dicer/pkg/single"
-	"dicer/pkg/stack"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -32,64 +31,6 @@ const MAX_LIVES = 1
 const NUM_AILMENTS = 9
 const NUM_DICE = 3
 const REMOVED_AILMENT_VALUE = -1
-
-/*************************************
-* Turn
-*************************************/
-type Turn struct {
-	round          int
-	dice           []Dice
-	result         int
-	expression     string
-	removedAilment bool
-	lostLife       bool
-	stack          *stack.ArrayStack[GameState]
-}
-
-func CreateTurn(round int) *Turn {
-	turn := &Turn{
-		round: round,
-		stack: CreateTurnStack(),
-	}
-
-	return turn
-}
-
-func CreateTurnStack() *stack.ArrayStack[GameState] {
-	stack := stack.CreateArrayStack[GameState]()
-
-	stack.Push(GS_ResultsPhase)
-	stack.Push(GS_ExpressionPhase)
-	stack.Push(GS_RollPhase)
-	stack.Push(GS_TurnStart)
-
-	return stack
-}
-
-func (t *Turn) RollDice() {
-	dice := make([]Dice, NUM_DICE)
-	for i := range dice {
-		dice[i] = CreateAndRollDie()
-	}
-
-	t.dice = dice
-}
-
-func (t *Turn) EvaluateExpression() {
-	postfix := math.InfixToPostfix(t.expression)
-	val, _ := math.EvaluatePostfixExpression(postfix)
-	t.result = val
-}
-
-func (t *Turn) ApplyResult(player *Player) {
-	if player.Ailments.HasAilment(t.result) {
-		player.Ailments.RemoveAilment(t.result)
-		t.removedAilment = true
-	} else {
-		player.RemoveLife()
-		t.lostLife = true
-	}
-}
 
 /*************************************
 * Dice
@@ -168,10 +109,6 @@ func (m *model) checkGameOver() bool {
 	return false
 }
 
-func (m *model) getCurrentState() (GameState, error) {
-	return m.turn.stack.Top()
-}
-
 func (m *model) endTurn() {
 	// Check game over condition first
 	if isGameOver := m.checkGameOver(); isGameOver != false {
@@ -188,14 +125,12 @@ func (m *model) endTurn() {
 	m.cursor = 0
 }
 
-func (m *model) resetDice() {
-	m.turn.dice = nil
+func (m *model) getCurrentState() (GameState, error) {
+	return m.turn.stack.Top()
 }
 
-func (m *model) rerollSelectedDice() {
-	for i := range m.selected {
-		m.turn.dice[i].Roll()
-	}
+func (m *model) resetDice() {
+	m.turn.dice = nil
 }
 
 func (m *model) isValidExpression() bool {
@@ -246,7 +181,7 @@ func (m *model) submitExpression() {
 		return
 	}
 
-	m.turn.EvaluateExpression()
+	m.turn.result = math.EvaluateExpression(m.turn.expression)
 	m.turn.ApplyResult(&m.player)
 }
 
@@ -333,7 +268,7 @@ func (m model) processGameState(state GameState, msg tea.Msg) (tea.Model, tea.Cm
 func (m *model) handleEnterKey(state GameState) {
 	switch state {
 	case GS_RollPhase:
-		m.rerollSelectedDice()
+		m.turn.RollSelectedDice(m.selected)
 		m.turn.stack.Pop()
 	case GS_ExpressionPhase:
 		m.submitExpression()

@@ -179,3 +179,9 @@ func IsBalancedParens(input string) bool {
 
 	return stack.IsEmpty()
 }
+
+func EvaluateExpression(exp string) int {
+	postfix := InfixToPostfix(exp)
+	val, _ := EvaluatePostfixExpression(postfix)
+	return val
+}

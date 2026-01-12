@@ -31,5 +31,6 @@ go.work.sum
 # .idea/
 .vscode/
 
-# Scratch notes
+# Scratch notes and builds
+builds/
 notes.md

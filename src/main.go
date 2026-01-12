@@ -242,7 +242,7 @@ func handleTurnStart(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func handleRollPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.message = "Select which die to re-roll."
-	m.instructions = "[ left arrow ] [ right arrow ] to navigate [ space ] to toggle [ enter ] to submit"
+	m.instructions = "[ left ] [ right ] to navigate [ space ] to toggle [ enter ] to submit"
 	return *m, nil
 }
 

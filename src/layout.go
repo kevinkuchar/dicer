@@ -215,8 +215,9 @@ func (m model) getBoard(message string) string {
 
 func (m model) getInstructions(width int) string {
 	style := lipgloss.NewStyle().
-		Width(width / 2).
+		Width(width/2 - 2).
 		Align(lipgloss.Left).
+		PaddingLeft(1).
 		Foreground(lipgloss.Color(COLOR_YELLOW))
 
 	return style.Render(m.instructions)
@@ -224,11 +225,26 @@ func (m model) getInstructions(width int) string {
 
 func (m model) getDebug(width int) string {
 	style := lipgloss.NewStyle().
-		Width(width / 2).
+		Width(width/2 - 2).
 		Align(lipgloss.Right).
+		PaddingRight(1).
 		Foreground(lipgloss.Color(COLOR_BRIGHT_RED))
 
 	return style.Render(m.debug)
+}
+
+func (m model) getFooter(width int, instructions, debug string) string {
+	footerContent := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		instructions,
+		debug,
+	)
+
+	footerStyle := lipgloss.NewStyle().
+		Width(width).
+		Align(lipgloss.Center)
+
+	return footerStyle.Render(footerContent)
 }
 
 func (m model) renderGameLayout(width, height int) string {
@@ -239,7 +255,7 @@ func (m model) renderGameLayout(width, height int) string {
 	instructions := m.getInstructions(m.width)
 	debug := m.getDebug(m.width)
 	// Board Math
-	boardHeight := height - lipgloss.Height(header) - lipgloss.Height(ailmentsBar)
+	boardHeight := height - lipgloss.Height(header) - lipgloss.Height(ailmentsBar) - 2
 	boardWidth := width - SIDEBAR_WIDTH - 1
 
 	// Style the main content area
@@ -257,12 +273,7 @@ func (m model) renderGameLayout(width, height int) string {
 		sidebar,
 	)
 
-	footer := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		instructions,
-		debug,
-	)
-
+	footer := m.getFooter(width, instructions, debug)
 	// Combine header, body, and ailments bar
 	ui := lipgloss.JoinVertical(
 		lipgloss.Left,

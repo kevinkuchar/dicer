@@ -1,54 +1,17 @@
 package main
 
 import (
+	"dicer/pkg/config"
 	"dicer/pkg/math"
+	"dicer/pkg/models"
 	"dicer/pkg/single"
 	"dicer/pkg/stack"
 	"fmt"
-	"math/rand/v2"
 	"os"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
-
-/*************************************
-* Game State Flow
-*************************************/
-type GameState int
-
-const (
-	GS_TurnStart       GameState = iota
-	GS_RollPhase                 // Re-roll selection phase
-	GS_ExpressionPhase           // Gather user input for expression
-	GS_ResultsPhase              // Show results of expression
-	GS_GameOver                  // Game over state
-)
-
-/*************************************
-* Game Configuration
-*************************************/
-const MAX_LIVES = 3
-const NUM_AILMENTS = 5
-const NUM_DICE = 4
-const REMOVED_AILMENT_VALUE = -1
-
-/*************************************
-* Dice
-*************************************/
-type Dice struct {
-	value int
-}
-
-func (d *Dice) Roll() {
-	d.value = rand.IntN(6) + 1
-}
-
-func CreateAndRollDie() Dice {
-	die := Dice{}
-	die.Roll()
-	return die
-}
 
 /*************************************
 * Bubble Tea Model
@@ -60,8 +23,8 @@ type model struct {
 	cursor       int
 	textInput    textinput.Model
 	message      string
-	player       Player
-	turn         *Turn
+	player       models.Player
+	turn         *models.Turn
 	width        int
 	height       int
 	instructions string
@@ -76,7 +39,7 @@ func initialModel() model {
 	ti.Width = 24
 
 	var choices []string
-	for i := 0; i < NUM_DICE; i++ {
+	for i := 0; i < config.NumDice; i++ {
 		choices = append(choices, "")
 	}
 
@@ -85,8 +48,8 @@ func initialModel() model {
 		selected:    make(map[int]struct{}),
 		choices:     choices,
 		textInput:   ti,
-		player:      CreatePlayer(MAX_LIVES, NUM_AILMENTS),
-		turn:        CreateTurn(1),
+		player:      models.CreatePlayer(config.MaxLives, config.NumAilments),
+		turn:        models.CreateTurn(1),
 		message:     "Press any [ key ] to begin",
 	}
 }
@@ -114,29 +77,29 @@ func (m *model) checkGameOver() bool {
 func (m *model) endTurn() {
 	// Check game over condition first
 	if isGameOver := m.checkGameOver(); isGameOver != false {
-		m.turn.stack.Push(GS_GameOver)
+		m.turn.Stack.Push(models.GS_GameOver)
 		return
 	}
 
 	// Set state for next turn
 	next := m.roundNumber + 1
 	m.roundNumber = next
-	m.turn = CreateTurn(next)
+	m.turn = models.CreateTurn(next)
 	m.textInput.Reset()
 	m.selected = make(map[int]struct{})
 	m.cursor = 0
 }
 
-func (m *model) getCurrentState() (GameState, error) {
-	return m.turn.stack.Top()
+func (m *model) getCurrentState() (models.TurnPhase, error) {
+	return m.turn.Stack.Top()
 }
 
 func (m *model) resetDice() {
-	m.turn.dice = nil
+	m.turn.Dice = nil
 }
 
 func (m *model) isValidExpression() bool {
-	exp := m.turn.expression
+	exp := m.turn.Expression
 
 	isBalanced := math.IsBalancedParens(exp)
 	if !isBalanced {
@@ -151,8 +114,8 @@ func (m *model) isValidExpression() bool {
 	}
 
 	numbers := &single.LinkedList{}
-	for num := range m.turn.dice {
-		numbers.InsertAtHead(m.turn.dice[num].value)
+	for num := range m.turn.Dice {
+		numbers.InsertAtHead(m.turn.Dice[num].Value)
 	}
 
 	numOperators := 0
@@ -171,7 +134,7 @@ func (m *model) isValidExpression() bool {
 		return false
 	}
 
-	if numOperators != NUM_DICE-1 {
+	if numOperators != config.NumDice-1 {
 		m.debug = "Too many operators"
 		return false
 	}
@@ -181,15 +144,15 @@ func (m *model) isValidExpression() bool {
 }
 
 func (m *model) submitExpression() {
-	m.turn.expression = m.textInput.Value()
+	m.turn.Expression = m.textInput.Value()
 
 	if !m.isValidExpression() {
-		m.turn.stack.Push(GS_ExpressionPhase)
+		m.turn.Stack.Push(models.GS_ExpressionPhase)
 		m.textInput.Reset()
 		return
 	}
 
-	m.turn.result = math.EvaluateExpression(m.turn.expression)
+	m.turn.Result = math.EvaluateExpression(m.turn.Expression)
 	m.turn.ApplyResult(&m.player)
 }
 
@@ -226,12 +189,12 @@ func isSpaceDelimted(exp string) bool {
 type StateHandler func(*model, tea.Msg) (tea.Model, tea.Cmd)
 
 // stateHandlers maps each game state to its handler function
-var stateHandlers = map[GameState]StateHandler{
-	GS_TurnStart:       handleTurnStart,
-	GS_RollPhase:       handleRollPhase,
-	GS_ExpressionPhase: handleExpressionPhase,
-	GS_ResultsPhase:    handleResultsPhase,
-	GS_GameOver:        handleGameOver,
+var stateHandlers = map[models.TurnPhase]StateHandler{
+	models.GS_TurnStart:       handleTurnStart,
+	models.GS_RollPhase:       handleRollPhase,
+	models.GS_ExpressionPhase: handleExpressionPhase,
+	models.GS_ResultsPhase:    handleResultsPhase,
+	models.GS_GameOver:        handleGameOver,
 }
 
 func handleTurnStart(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -249,7 +212,7 @@ func handleRollPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 func handleExpressionPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.message = "Type your expression! Ensure there is a space between each character. Valid operators include ( ) * / + -"
 	m.instructions = "[ enter ] to submit"
-	// if m.turn.expression != "" {
+	// if m.turn.Expression != "" {
 	// 	m.message = m.message + "\nInvalid expression. Try again."
 	// }
 	m.textInput, _ = m.textInput.Update(msg)
@@ -258,12 +221,12 @@ func handleExpressionPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func handleResultsPhase(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.resetDice()
-	enteredText := fmt.Sprintf("You entered %s which evaluates to %d.", m.turn.expression, m.turn.result)
+	enteredText := fmt.Sprintf("You entered %s which evaluates to %d.", m.turn.Expression, m.turn.Result)
 	var resultText string
-	if m.turn.lostLife {
+	if m.turn.LostLife {
 		resultText = fmt.Sprintf("You lost a life! %d lives remaining.", m.player.Lives)
-	} else if m.turn.removedAilment {
-		resultText = fmt.Sprintf("Hit! You removed %d.", m.turn.result)
+	} else if m.turn.RemovedAilment {
+		resultText = fmt.Sprintf("Hit! You removed %d.", m.turn.Result)
 	}
 	m.message = enteredText + "\n" + resultText
 	m.instructions = "[ space ] to continue"
@@ -283,7 +246,7 @@ func handleGameOver(m *model, msg tea.Msg) (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
-func (m model) processGameState(state GameState, msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) processGameState(state models.TurnPhase, msg tea.Msg) (tea.Model, tea.Cmd) {
 	handler, exists := stateHandlers[state]
 	if !exists {
 		// Unknown state
@@ -297,51 +260,51 @@ func (m model) processGameState(state GameState, msg tea.Msg) (tea.Model, tea.Cm
 * Key handlers
 *************************************/
 // On [ enter ] press
-func (m *model) handleEnterKey(state GameState) {
+func (m *model) handleEnterKey(state models.TurnPhase) {
 	switch state {
-	case GS_RollPhase:
+	case models.GS_RollPhase:
 		m.turn.RollSelectedDice(m.selected)
-		m.turn.stack.Pop()
-	case GS_ExpressionPhase:
+		m.turn.Stack.Pop()
+	case models.GS_ExpressionPhase:
 		m.submitExpression()
-		m.turn.stack.Pop()
+		m.turn.Stack.Pop()
 	}
 }
 
 // On [ space ] press
-func (m *model) handleSpaceKey(state GameState) {
+func (m *model) handleSpaceKey(state models.TurnPhase) {
 	switch state {
-	case GS_RollPhase:
+	case models.GS_RollPhase:
 		m.toggleDiceSelection()
-	case GS_ResultsPhase:
+	case models.GS_ResultsPhase:
 		m.endTurn()
 	}
 }
 
 // On [ r ] press
-func (m *model) handleRollKey(state GameState) {
-	if state == GS_TurnStart {
-		m.turn.stack.Pop()
+func (m *model) handleRollKey(state models.TurnPhase) {
+	if state == models.GS_TurnStart {
+		m.turn.Stack.Pop()
 		m.turn.RollDice()
 	}
 }
 
 // On [ left key ] press
-func (m *model) handleLeftKey(state GameState) {
-	if state == GS_RollPhase && m.cursor > 0 {
+func (m *model) handleLeftKey(state models.TurnPhase) {
+	if state == models.GS_RollPhase && m.cursor > 0 {
 		m.cursor--
 	}
 }
 
 // On [ right ] press
-func (m *model) handleRightKey(state GameState) {
-	if state == GS_RollPhase && m.cursor < len(m.choices)-1 {
+func (m *model) handleRightKey(state models.TurnPhase) {
+	if state == models.GS_RollPhase && m.cursor < len(m.choices)-1 {
 		m.cursor++
 	}
 }
 
 // Forward [ ] key presses
-func (m *model) handleKeyPress(key tea.KeyMsg, state GameState) tea.Cmd {
+func (m *model) handleKeyPress(key tea.KeyMsg, state models.TurnPhase) tea.Cmd {
 	switch key.String() {
 	case "ctrl+c", "q":
 		return tea.Quit
@@ -385,7 +348,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle key messages
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		// Reset Game
-		if keyMsg.String() == "enter" && currentState == GS_GameOver {
+		if keyMsg.String() == "enter" && currentState == models.GS_GameOver {
 			model := newModel(&m)
 			return model, nil
 		}

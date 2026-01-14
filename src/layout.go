@@ -1,6 +1,7 @@
 package main
 
 import (
+	"dicer/pkg/models"
 	"fmt"
 
 	"github.com/charmbracelet/lipgloss"
@@ -81,8 +82,8 @@ func (m model) getStatusSidebar() string {
 
 func (m model) getAilmentsBar(width int) string {
 	ailments := m.player.Ailments
-	availableWidth := width - len(ailments.remaining) - 1
-	boxWidth := availableWidth / len(ailments.remaining)
+	availableWidth := width - len(ailments.Remaining) - 1
+	boxWidth := availableWidth / len(ailments.Remaining)
 
 	createBoxStyle := func(background lipgloss.Color) lipgloss.Style {
 		return lipgloss.NewStyle().
@@ -96,7 +97,7 @@ func (m model) getAilmentsBar(width int) string {
 
 	// Create 9 boxes, one for each ailment (1-9)
 	var boxes []string
-	for i := 1; i <= len(ailments.remaining); i++ {
+	for i := 1; i <= len(ailments.Remaining); i++ {
 		var boxStyle lipgloss.Style
 		if ailments.HasAilment(i) {
 			boxStyle = createBoxStyle(COLOR_AILMENT_ACTIVE)
@@ -123,7 +124,7 @@ func (m model) getAilmentsBar(width int) string {
 	return barStyle.Render(bar)
 }
 
-func (m model) getDice(dice []Dice) string {
+func (m model) getDice(dice []models.Dice) string {
 	// Create a box style with border, no background, bold centered text
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -136,7 +137,7 @@ func (m model) getDice(dice []Dice) string {
 	// Create boxes for each die
 	var boxes []string
 	for _, die := range dice {
-		boxes = append(boxes, boxStyle.Render(fmt.Sprintf("%d", die.value)))
+		boxes = append(boxes, boxStyle.Render(fmt.Sprintf("%d", die.Value)))
 	}
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, boxes...)
@@ -188,17 +189,17 @@ func (m model) getBoard(message string) string {
 	contentStyle := lipgloss.NewStyle().
 		Padding(1, 2)
 
-	dice := m.getDice(m.turn.dice)
+	dice := m.getDice(m.turn.Dice)
 
-	turnState, _ := m.turn.stack.Top()
+	turnState, _ := m.turn.Stack.Top()
 
 	choices := ""
-	if turnState == GS_RollPhase {
+	if turnState == models.GS_RollPhase {
 		choices = m.getChoices()
 	}
 
 	expression := ""
-	if turnState == GS_ExpressionPhase {
+	if turnState == models.GS_ExpressionPhase {
 		expression = m.textInput.View()
 	}
 

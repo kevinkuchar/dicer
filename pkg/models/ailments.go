@@ -1,10 +1,12 @@
-package main
+package models
+
+import "dicer/pkg/config"
 
 /*************************************
 * Ailments
 *************************************/
 type Ailments struct {
-	remaining []int
+	Remaining []int
 }
 
 func CreateAilments(num int) *Ailments {
@@ -14,13 +16,13 @@ func CreateAilments(num int) *Ailments {
 		slice[i] = i + 1
 	}
 
-	ailments := &Ailments{remaining: slice}
+	ailments := &Ailments{Remaining: slice}
 	return ailments
 }
 
 func (ailments *Ailments) HasAilments() bool {
-	for a := range ailments.remaining {
-		if ailments.remaining[a] != REMOVED_AILMENT_VALUE {
+	for a := range ailments.Remaining {
+		if ailments.Remaining[a] != config.RemovedAilmentValue {
 			return true
 		}
 	}
@@ -28,12 +30,12 @@ func (ailments *Ailments) HasAilments() bool {
 }
 
 func (ailments *Ailments) HasAilment(num int) bool {
-	if len(ailments.remaining) < num || num < 1 {
+	if len(ailments.Remaining) < num || num < 1 {
 		return false
 	}
-	return ailments.remaining[num-1] != REMOVED_AILMENT_VALUE
+	return ailments.Remaining[num-1] != config.RemovedAilmentValue
 }
 
 func (ailments *Ailments) RemoveAilment(result int) {
-	ailments.remaining[result-1] = REMOVED_AILMENT_VALUE
+	ailments.Remaining[result-1] = config.RemovedAilmentValue
 }
